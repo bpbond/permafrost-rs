@@ -8,7 +8,7 @@ coords <- tribble(
 )
 coords$ID <- seq_len(nrow(coords))
 
-results <- list()
+results_list <- list()
 
 files <- list.files("esacci-permafrost/", full.names = TRUE,
                     pattern = "\\.nc$", recursive = TRUE)
@@ -23,7 +23,7 @@ for(fn in files) {
   message("Opening ", basename(fn))
   nc <- nc_open(fn)
   
-  ncvars_to_read <- c("T1m")
+  ncvars_to_read <- c("GST", "T1m")
   #ncvars_to_read <- c("GST", "GST_uncertainty", "T1m", "T1m_uncertainty")
   for(v in ncvars_to_read) {
     message("\tGetting ", v)
@@ -38,20 +38,73 @@ for(fn in files) {
                      crs="+proj=longlat +datum=WGS84")
     message("\tExtracting points...")
     xdat <- terra::extract(dat_rast, coords[2:3])
-    coords[v] <- xdat[2]
+    coords[paste0("var_", v)] <- xdat[2]
   }
   
   # The year is in the filename; extract it (a bit hackily)
   yr <- strsplit(basename(fn), "-", fixed = TRUE)[[1]][7]
   coords$Year <- as.numeric(yr)
-  results[[yr]] <- coords
+  results_list[[yr]] <- coords
   
   nc_close(nc)
 }
 
+library(tidyr)
 library(dplyr)
+results <- bind_rows(results_list)
+
 library(ggplot2)
 theme_set(theme_bw())
-bind_rows(results) |> 
-  ggplot(aes(Year, T1m, color = place)) + geom_line()
+p <- ggplot(results, aes(Year, var_T1m, color = place)) +
+  geom_line(na.rm = TRUE) + 
+  geom_smooth(method = "lm")
+print(p)
 
+# TODO: for each ID, filter the results for the year of the Rs
+# observation and keep that value
+
+message("Computing means and trends...")
+results |> 
+  select(ID, Year, starts_with("var_")) |> 
+  select(-ends_with("uncertainty")) ->
+  results_non_uncertainty
+
+# Compute means
+results_non_uncertainty |> 
+  pivot_longer(starts_with("var_")) |> 
+  group_by(ID, name) |> 
+  summarise(value = mean(value), .groups = "drop") |> 
+  mutate(name = paste0(name, "_mean")) |> 
+  pivot_wider() ->
+  results_mean
+
+# Compute trends
+library(broom)
+results_non_uncertainty |> 
+  pivot_longer(starts_with("var_")) |> 
+  filter(!is.na(value)) |> 
+  group_by(ID, name) |> 
+  reframe(lm(value ~ Year) %>% tidy()) |> 
+  filter(term == "Year") |> 
+  select(ID, name, estimate, p.value) ->
+  trends
+
+trends |> 
+  select(ID, name, estimate) |> 
+  mutate(name = paste0(name, "_trend")) |> 
+  pivot_wider(values_from = "estimate") ->
+  trends_est
+trends |> 
+  select(ID, name, p.value) |> 
+  mutate(name = paste0(name, "_p.value")) |> 
+  pivot_wider(values_from = "p.value") ->
+  trends_p
+
+results_mean |> 
+  left_join(trends_est, by = "ID") |> 
+  left_join(trends_p, by = "ID") ->
+  results_stats
+
+# TODO: end result is a data frame with year-specific data for each
+# variable at each ID; overall mean for each variable at that point;
+# and trend for each variable.
