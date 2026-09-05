@@ -244,50 +244,66 @@ trends |>
 results_mean |> 
   left_join(trends_est, by = c("Record_number", "Longitude", "Latitude")) |> 
   left_join(trends_p, c("Record_number", "Longitude", "Latitude")) ->
-  results_stats
+  pf_stats
 
 ggplot(world) + 
     geom_sf() + 
-    geom_point(data = results_stats, 
+    geom_point(data = pf_stats, 
                aes(x = Longitude, y = Latitude, color = var_T1m_mean)) + 
   coord_sf(ylim = c(25, 85)) +
-    ggtitle(paste0("Permafrost T1m (degC) N=", nrow(results_stats)))
+    ggtitle(paste0("Permafrost T1m (degC) N=", nrow(pf_stats)))
 
 ggplot(world) + 
     geom_sf() + 
-    geom_point(data = results_stats, 
+    geom_point(data = pf_stats, 
                aes(x = Longitude, y = Latitude, color = var_T1m_trend)) + 
   coord_sf(ylim = c(25, 85)) +
-    ggtitle(paste0("Permafrost var_T1m_trend (degC/decade) N=", nrow(results_stats)))
+    ggtitle(paste0("Permafrost var_T1m_trend (degC/decade) N=", nrow(pf_stats)))
 
 ```
 
-```{r}
+```{r trend-visualization}
+#| fig-width: 12
 
-ggplot(results_stats, 
+ggplot(pf_stats, 
        aes(x = var_T1m_mean, y = Latitude, 
            color = var_T1m_trend)) + 
   geom_point() +
   ggtitle("Trend versus latitude")
+
+# Categorical (cooling/none/warming) trend map
+pf_stats |> 
+  mutate(Trend = if_else(var_T1m_p.value >= 0.05, "None",
+                         if_else(var_T1m_trend < 0, 
+                                 "Cooling", "Warming"))) ->
+  results_categorical
+ggplot(world) + 
+    geom_sf() + 
+    geom_point(data = results_categorical, 
+               aes(x = Longitude, y = Latitude, color = Trend)) + 
+  coord_sf(ylim = c(25, 85)) +
+  scale_color_manual(values = c("blue", "darkgrey", "red")) +
+  ggtitle("Permafrost temperature trends")
 ```
 
 ## WorldClim and allies
 
-```{r}
+```{r geodata}
 message("Doing WorldClim")
 coords_worldclim <- coords
 tavg <- worldclim_global(var = "tavg", path = "data-worldclim/", res = 5)
 tavg_dat <- terra::extract(tavg, coords_worldclim[2:3])
-coords_worldclim$MAT <- rowMeans(tavg_dat[-1]) 
+coords_worldclim$MAT_wc <- rowMeans(tavg_dat[-1]) 
 
 prec <- worldclim_global(var = "prec", 
                          path = "data-worldclim/", res = 5)
 prec_dat <- terra::extract(prec, coords_worldclim[2:3])
-coords_worldclim$MAP <- rowSums(prec_dat[-1]) 
+coords_worldclim$MAP_wc <- rowSums(prec_dat[-1]) 
 
 message("Doing landcover...")
 for(cov in c("trees", "grassland", "shrubs", "bare", "wetland", "moss")) {
   cover <- landcover(cov, path = "data-worldclim/")
+  plot(cover, main = cov)
   cover_dat <- terra::extract(cover, coords_worldclim[2:3])
   coords_worldclim[[paste0("cover_", cov)]] <- cover_dat[,2]
 }
@@ -306,15 +322,18 @@ ggplot(world) +
                aes(x = Longitude, y = Latitude, color = Clay)) + 
     ggtitle("WorldClim Clay")
 
-ggplot(coords_worldclim, aes(MAT, MAP)) + 
+ggplot(coords_worldclim, aes(MAT_wc, MAP_wc)) + 
   geom_point(na.rm = TRUE) + 
     ggtitle("WorldClim MAT and MAP")
 
-ggplot(world) + 
-    geom_sf() + 
-    geom_point(data = coords_worldclim, 
-               aes(x = Longitude, y = Latitude, color = cover_trees)) + 
-    ggtitle("Tree cover")
+```
+
+```{r combine-data}
+
+srdb_sample |> 
+  left_join(pf_stats, by = join_by("Record_number", "Latitude", "Longitude")) |> 
+  left_join(coords_worldclim, by = join_by("Record_number", "Latitude", "Longitude")) -> 
+  srdb_joined
 
 ```
 
@@ -322,9 +341,9 @@ ggplot(world) +
 ```{r write-data}
 OUTFILE <- "srdb_joined_data.parquet"
 message("Writing ", OUTFILE)
-write_parquet(srdb_sample, OUTFILE)
+write_parquet(srdb_joined, OUTFILE)
 
-DT::datatable(srdb_sample)
+DT::datatable(srdb_joined)
 ```
 
 ## Reproducibility
