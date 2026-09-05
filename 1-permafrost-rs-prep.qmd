@@ -9,6 +9,10 @@ toc: true
 editor: visual
 ---
 
+This file does prep work for the main analysis asking
+whether permafrost _presence_ and _thermal state_ affect
+the measured soil-to-atmosphere CO2 flux ("soil respiration").
+
 ```{r setup}
 #| include: false
 
@@ -125,7 +129,8 @@ if(file.exists(PERMAFROST_CACHE)) {
 } else {
   message("No permafrost cache file found")
   pf_cache <- tibble(Record_number = numeric(0), 
-               Longitude = numeric(0), Latitude = numeric(0))
+                     Longitude = numeric(0), 
+                     Latitude = numeric(0))
 }
 
 # Isolate SRDB lon/lats NOT in the cache
@@ -133,7 +138,8 @@ coords |>
   anti_join(pf_cache, by = c("Record_number", "Longitude", "Latitude")) ->
   coords_no_data
 if(nrow(coords_no_data) > 0) {
-  message("There are ", nrow(coords_no_data), " coordinates that need data")
+  message("There are ", nrow(coords_no_data), 
+          " coordinates that need data")
   
   results_list <- list()
 
@@ -246,6 +252,8 @@ results_mean |>
   left_join(trends_p, c("Record_number", "Longitude", "Latitude")) ->
   pf_stats
 
+# Visualize
+
 ggplot(world) + 
     geom_sf() + 
     geom_point(data = pf_stats, 
@@ -286,9 +294,11 @@ ggplot(world) +
   ggtitle("Permafrost temperature trends")
 ```
 
-## WorldClim and allies
+## WorldClim
 
-```{r geodata}
+```{r worldclim}
+#| fig-width: 12
+
 message("Doing WorldClim")
 coords_worldclim <- coords
 tavg <- worldclim_global(var = "tavg", path = "data-worldclim/", res = 5)
@@ -299,6 +309,18 @@ prec <- worldclim_global(var = "prec",
                          path = "data-worldclim/", res = 5)
 prec_dat <- terra::extract(prec, coords_worldclim[2:3])
 coords_worldclim$MAP_wc <- rowSums(prec_dat[-1]) 
+
+# Visualize
+
+ggplot(coords_worldclim, aes(MAT_wc, MAP_wc)) + 
+  geom_point(na.rm = TRUE, alpha = 0.5) + 
+    ggtitle("WorldClim MAT and MAP")
+```
+
+## Soil and land cover
+
+```{r soil-landcover}
+#| fig-width: 12
 
 message("Doing landcover...")
 for(cov in c("trees", "grassland", "shrubs", "bare", "wetland", "moss")) {
@@ -321,22 +343,22 @@ ggplot(world) +
     geom_point(data = coords_worldclim, 
                aes(x = Longitude, y = Latitude, color = Clay)) + 
     ggtitle("WorldClim Clay")
-
-ggplot(coords_worldclim, aes(MAT_wc, MAP_wc)) + 
-  geom_point(na.rm = TRUE) + 
-    ggtitle("WorldClim MAT and MAP")
-
 ```
 
+## Combined QAQC
+
 ```{r combine-data}
+message("Size before joins: ", nrow(srdb_sample))
 
 srdb_sample |> 
   left_join(pf_stats, by = join_by("Record_number", "Latitude", "Longitude")) |> 
   left_join(coords_worldclim, by = join_by("Record_number", "Latitude", "Longitude")) -> 
   srdb_joined
 
+message("Size after joins: ", nrow(srdb_joined))
 ```
 
+Writing data to file for next step in the analysis.
 
 ```{r write-data}
 OUTFILE <- "srdb_joined_data.parquet"
