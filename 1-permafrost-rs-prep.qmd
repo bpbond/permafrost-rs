@@ -12,18 +12,27 @@ editor: visual
 ```{r setup}
 #| include: false
 
+# Data processing and visualization packages
 library(dplyr)
 library(tidyr)
 library(ggplot2)
 theme_set(theme_bw())
-library(sf)
-library(rnaturalearth)
-library(readr)
-library(terra)
-library(ncdf4)
 library(lubridate)
 library(DT)
+
+# File IO packages
+library(ncdf4)
 library(arrow)
+library(readr)
+
+# Statistics and spatial packages
+library(broom)
+library(sf)
+library(terra)
+
+# Data packages
+library(geodata)
+library(rnaturalearth)
 ```
 
 ## SRDB
@@ -102,7 +111,7 @@ srdb_sample %>%
 
 ## ESA-CCI permafrost
 
-For a drought index we are using the recent ERA5–Drought based on the 5th generation ECMWF reanalysis system (ERA5). Its Standardized Precipitation Evapotranspiration Index (SPEI) is calculated over accumulation periods ranging from 1 month to 4 years; we use the 12 and 24 month products here. See [Keune et al. (2025)](https://www.nature.com/articles/s41597-025-04896-y)
+Our data source for permafrost temperatures is Westermann et al.: ESA permafrost Climate Change Initiative (permafrost_cci): Permafrost ground temperature for the Northern Hemisphere, v5.0, https://doi.org/10.5285/5675B0BE944F45A8AF0E7DDBEB47A011, 2025.
 
 ```{r read-essacci-permafrost}
 #| fig-height: 6
@@ -128,8 +137,10 @@ if(nrow(coords_no_data) > 0) {
   
   results_list <- list()
 
-  files <- list.files("esacci-permafrost/", full.names = TRUE,
-                    pattern = "\\.nc$", recursive = TRUE)
+  files <- list.files("data-permafrost_cci//", 
+                      full.names = TRUE,
+                      pattern = "\\.nc$",
+                      recursive = TRUE)
  
   for(fn in files) {
     # Trying a simple terra::rast() with these data gives
@@ -190,8 +201,7 @@ pf_cache |>
 OK!
 
 ```{r permafrost-stats}
-#| fig-height: 6
-#| fig-width: 10
+#| fig-width: 12
 
 message("Computing means and trends...")
 pf_cache |> 
@@ -210,7 +220,6 @@ results_non_uncertainty |>
   results_mean
 
 # Compute trends
-library(broom)
 results_non_uncertainty |> 
   pivot_longer(starts_with("var_")) |> 
   filter(!is.na(value)) |> 
@@ -241,13 +250,71 @@ ggplot(world) +
     geom_sf() + 
     geom_point(data = results_stats, 
                aes(x = Longitude, y = Latitude, color = var_T1m_mean)) + 
+  coord_sf(ylim = c(25, 85)) +
     ggtitle(paste0("Permafrost T1m (degC) N=", nrow(results_stats)))
 
 ggplot(world) + 
     geom_sf() + 
     geom_point(data = results_stats, 
                aes(x = Longitude, y = Latitude, color = var_T1m_trend)) + 
+  coord_sf(ylim = c(25, 85)) +
     ggtitle(paste0("Permafrost var_T1m_trend (degC/decade) N=", nrow(results_stats)))
+
+```
+
+```{r}
+
+ggplot(results_stats, 
+       aes(x = var_T1m_mean, y = Latitude, 
+           color = var_T1m_trend)) + 
+  geom_point() +
+  ggtitle("Trend versus latitude")
+```
+
+## WorldClim and allies
+
+```{r}
+message("Doing WorldClim")
+coords_worldclim <- coords
+tavg <- worldclim_global(var = "tavg", path = "data-worldclim/", res = 5)
+tavg_dat <- terra::extract(tavg, coords_worldclim[2:3])
+coords_worldclim$MAT <- rowMeans(tavg_dat[-1]) 
+
+prec <- worldclim_global(var = "prec", 
+                         path = "data-worldclim/", res = 5)
+prec_dat <- terra::extract(prec, coords_worldclim[2:3])
+coords_worldclim$MAP <- rowSums(prec_dat[-1]) 
+
+message("Doing landcover...")
+for(cov in c("trees", "grassland", "shrubs", "bare", "wetland", "moss")) {
+  cover <- landcover(cov, path = "data-worldclim/")
+  cover_dat <- terra::extract(cover, coords_worldclim[2:3])
+  coords_worldclim[[paste0("cover_", cov)]] <- cover_dat[,2]
+}
+
+message("Doing clay...")
+clay <- soil_world("clay", depth = 5, stat = "mean", 
+                   path = "data-worldclim/")
+clay_dat <- terra::extract(clay, coords_worldclim[2:3])
+coords_worldclim$Clay <- clay_dat[,2]
+
+# Visualize
+
+ggplot(world) + 
+    geom_sf() + 
+    geom_point(data = coords_worldclim, 
+               aes(x = Longitude, y = Latitude, color = Clay)) + 
+    ggtitle("WorldClim Clay")
+
+ggplot(coords_worldclim, aes(MAT, MAP)) + 
+  geom_point(na.rm = TRUE) + 
+    ggtitle("WorldClim MAT and MAP")
+
+ggplot(world) + 
+    geom_sf() + 
+    geom_point(data = coords_worldclim, 
+               aes(x = Longitude, y = Latitude, color = cover_trees)) + 
+    ggtitle("Tree cover")
 
 ```
 
