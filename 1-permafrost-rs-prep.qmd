@@ -9,6 +9,17 @@ toc: true
 editor: visual
 ---
 
+**TODO:**
+
+* Add MODIS GPP (from gsbe)
+* Add some QA/QC and summary info to bottom of this
+* There's a lot of NA MAT and MAP from WorldClim (see next bullet)
+* Do I want to change to ERA5? Probably b/c that will let me get year-specific info
+* Try global Random Forest model with permafrost flag
+* CLEAN UP GRACE'S STUFF AND MERGE AND UPDATE
+* Deal with the remaining papers in my to-process folder, prioritizing high latitude ones
+
+
 This file does prep work for the main analysis asking
 whether permafrost _presence_ and _thermal state_ affect
 the measured soil-to-atmosphere CO2 flux ("soil respiration").
@@ -22,7 +33,6 @@ library(tidyr)
 library(ggplot2)
 theme_set(theme_bw())
 library(lubridate)
-library(DT)
 
 # File IO packages
 library(ncdf4)
@@ -115,7 +125,7 @@ srdb_sample %>%
 
 ## ESA-CCI permafrost
 
-Our data source for permafrost temperatures is Westermann et al.: ESA permafrost Climate Change Initiative (permafrost_cci): Permafrost ground temperature for the Northern Hemisphere, v5.0, https://doi.org/10.5285/5675B0BE944F45A8AF0E7DDBEB47A011, 2025.
+Our data source for permafrost temperatures is Westermann et al.: ESA permafrost Climate Change Initiative (permafrost_cci): Permafrost ground temperature for the Northern Hemisphere, v5.0, [https://doi.org/10.5285/5675B0BE944F45A8AF0E7DDBEB47A011](https://doi.org/10.5285/5675B0BE944F45A8AF0E7DDBEB47A011), 2025.
 
 ```{r read-essacci-permafrost}
 #| fig-height: 6
@@ -229,9 +239,9 @@ results_non_uncertainty |>
   pivot_longer(starts_with("var_")) |> 
   filter(!is.na(value)) |> 
   group_by(Record_number, Longitude, Latitude, name) |> 
-  reframe(lm(value ~ Year) %>% tidy()) |> 
+  reframe(lm(value ~ Year) |> tidy()) |> 
   filter(term == "Year") |> 
-  mutate(estimate = estimate * 10) |> # degrees per decade
+  mutate(estimate = estimate * 10) |> # change to degrees per decade
   select(Record_number, Longitude, Latitude, name, estimate, p.value) ->
   trends
 
@@ -247,8 +257,10 @@ trends |>
   trends_p
 
 results_mean |> 
-  left_join(trends_est, by = c("Record_number", "Longitude", "Latitude")) |> 
-  left_join(trends_p, c("Record_number", "Longitude", "Latitude")) ->
+  left_join(trends_est, 
+            by = c("Record_number", "Longitude", "Latitude")) |> 
+  left_join(trends_p, 
+            by = c("Record_number", "Longitude", "Latitude")) ->
   pf_stats
 
 # Visualize
@@ -278,7 +290,7 @@ ggplot(pf_stats,
   geom_point() +
   ggtitle("Trend versus latitude")
 
-# Categorical (cooling/none/warming) trend map
+# Categorical (cooling/no sig. change/warming) trend map
 pf_stats |> 
   mutate(Trend = if_else(var_T1m_p.value >= 0.05, "None",
                          if_else(var_T1m_trend < 0, 
@@ -363,8 +375,6 @@ Writing data to file for next step in the analysis.
 OUTFILE <- "srdb_joined_data.parquet"
 message("Writing ", OUTFILE)
 write_parquet(srdb_joined, OUTFILE)
-
-DT::datatable(srdb_joined)
 ```
 
 ## Reproducibility
