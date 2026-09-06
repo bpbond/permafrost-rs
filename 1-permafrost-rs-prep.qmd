@@ -156,8 +156,7 @@ if(nrow(coords_no_data) > 0) {
     message("Opening ", basename(fn))
     nc <- nc_open(fn)
     
-    ncvars_to_read <- c("T1m")
-    #ncvars_to_read <- c("GST", "GST_uncertainty", "T1m", "T1m_uncertainty")
+    ncvars_to_read <- c("GST", "GST_uncertainty", "T1m", "T1m_uncertainty")
     for(v in ncvars_to_read) {
       message("\tGetting ", v)
       dat_matrix <- ncvar_get(nc, varid = v)
@@ -188,7 +187,7 @@ if(nrow(coords_no_data) > 0) {
     bind_rows(pf_cache) ->
     pf_cache
   
-  message("Writing cache file (", nrow(results), " rows)...")
+  message("Writing cache file (", nrow(pf_cache), " rows)...")
   arrow::write_parquet(pf_cache, PERMAFROST_CACHE)
 }
 
