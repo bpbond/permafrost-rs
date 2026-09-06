@@ -1,0 +1,51 @@
+---
+title: "2-permafrost-rs"
+author: "bbl"
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+toc: true
+editor: visual
+---
+
+## Science question and hypotheses
+
+Permafrost is warming and potentially throughout circumpolar boreal 
+and arctic regions.
+
+Increases in the active layer depth should, over time, put more SOC 
+in play for decomposition: both because of the warming temperature and,
+crucially, the phase change of ice to water.
+
+### Hypothesis 1
+
+Accounting for permafrost presence should improve global model performance
+in predicting soil respiration (annual, annual heterotrophic,
+and growing season mean).
+
+**This effect will occur for all three observed fluxes.**
+
+How to test: a standard Random Forest model using
+
+* MAT
+* MAP
+* Clay content
+* Land cover
+* Permafrost presence (could test SoilGrids gelisols as well as ESA-CCI?)
+* MODIS GPP
+
+### Hypothesis 2
+
+Focusing on the permafrost region, thermal state (temperature and 1997-2023
+temperature trend) will improve performance against observations, 
+specifically _increasing_ predicted respiration (because of more SOC 
+available for decomposition)
+
+**This effect will be occur only for `Rs_growingseason`, i.e.
+the growing season mean.**
+
+## Hypothesis 3
+
+If H2 is true, this lets us estimate the change in soil-to-atmosphere 
+carbon flux due to permafrost thaw. (Not really a hypothesis.)
