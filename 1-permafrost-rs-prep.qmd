@@ -45,9 +45,10 @@ library(terra)
 # Data packages
 library(geodata)
 library(rnaturalearth)
+library(MODISTools)
 ```
 
-## SRDB
+# SRDB
 
 The Soil Respiration Database (SRBD) is described by [Jian et al. (2021)](https://essd.copernicus.org/articles/13/255/2021/), but the version we use here has had extensive updates since then.
 
@@ -122,7 +123,7 @@ srdb_sample %>%
   coords_yr
 ```
 
-## ESA-CCI permafrost
+# ESA-CCI permafrost
 
 Our data source for permafrost temperatures is Westermann et al.: ESA permafrost Climate Change Initiative (permafrost_cci): Permafrost ground temperature for the Northern Hemisphere, v5.0, <https://doi.org/10.5285/5675B0BE944F45A8AF0E7DDBEB47A011>, 2025.
 
@@ -304,6 +305,8 @@ ggplot(world) +
   ggtitle("Permafrost temperature trends")
 ```
 
+# Ancillary data
+
 ## WorldClim
 
 ```{r worldclim}
@@ -376,7 +379,7 @@ for Tair and Precip; and match individual-year values to SRDB year.
 ERA5_SHORT_NAME <- read_csv("data-ERA5/data-ERA5/ERA5_short_names.csv", col_types = "cc")
 ERA5_CACHE <- "caches/ERA5_data_cache.parquet"
 if(file.exists(ERA5_CACHE)) {
-    message("Reading cache file ", ERA5_CACHE, "...")
+    message("Reading cache file ", ERA5_CACHE)
     cache <- arrow::read_parquet(ERA5_CACHE)
     message(, "\t", nrow(cache), " rows")
 } else {
@@ -439,7 +442,7 @@ for(i in seq_len(nrow(pf_lonlat))) {
         select(Year, time, Longitude, Latitude, short_name, value) ->
         dat
       cache <- bind_rows(cache, dat)
-      message("\tAdding ", nrow(dat), " data rows to cache ", ERA5_CACHE, "...")
+      message("\tAdding ", nrow(dat), " data rows to cache ", ERA5_CACHE)
       arrow::write_parquet(cache, ERA5_CACHE)
     }
   } # yr loop
@@ -495,7 +498,100 @@ ggplot(world) +
   ggtitle("ERA5 precip trends (cm/decade)")
 ```
 
-## Combined QAQC
+## MODIS 8-day GPP
+
+The [MODIS GPP MOD17A2HGF product](https://data.nasa.gov/dataset/modis-terra-gross-primary-productivity-gap-filled-8-day-l4-global-500m-sin-grid-v061-f3633)
+is every eight days, 500 meter (m) resolution, and we sum it for an annual value.
+
+S. Running, Zhao, M. 2021. MOD17A2HGF MODIS/Terra Gross Primary Productivity Gap-Filled 8-Day L4 Global 500 m SIN Grid V061. NASA EOSDIS Land Processes DAAC. https://doi.org/10.5067/MODIS/MOD17A2HGF.061
+
+This process is *also* slow.
+
+```{r modis-gpp}
+#| fig-width: 12
+
+# Load cached data if available
+MODIS_GPP_CACHE <- "caches/MODIS_GPP_cache.parquet"
+if(file.exists(MODIS_GPP_CACHE)) {
+  message("Reading cache file ", MODIS_GPP_CACHE)
+  cache <- arrow::read_parquet(MODIS_GPP_CACHE)
+  message("\t", nrow(cache), " rows")
+} else {
+  message("No MODIS GPP data cache found")
+  cache <- tibble(Year = numeric(0), 
+                  calendar_date = character(0),
+                  Longitude = numeric(0), Latitude = numeric(0),
+                  MODIS_GPP = numeric(0))
+}
+
+# coords_yr (the unique combinations of location and time)
+# was already calculated above
+cache_hits <- 0
+for(i in seq_len(nrow(coords_yr))) {
+  yr <- coords_yr$Year[i]
+  lon <- coords_yr$Longitude[i]
+  lat <- coords_yr$Latitude[i]
+  
+  # Are data already in cache?
+  cache %>% 
+    filter(Year == yr, Longitude == lon, Latitude == lat) ->
+    dat
+  if(nrow(dat) > 0) {
+    #message("\t", nrow(dat), " data rows are in cache")
+    cache_hits <- cache_hits + 1
+  } else {
+    # Need to use MODISTools to download the needed data
+    if(cache_hits > 0) { 
+      message("(", cache_hits, " cache hits)")
+      cache_hits <- 0
+    }
+    
+    message(i, "/", nrow(coords_yr), ": ", yr, " ", lon, " ", lat, appendLF = FALSE)
+    message("\tNo data in cache; querying MODIS GPP products...")
+    gpp <- NULL
+    try({
+      gpp <- mt_subset("MOD17A2HGF", 
+                       band = "Gpp_500m", 
+                       lat = lat, lon = lon, 
+                       start = paste0(yr, "-01-01"), end = paste0(yr, "-12-31"))
+    })
+    if(is.null(gpp)) {
+      gpp_dat <- tibble(Year = yr, 
+                        calendar_date = NA_character_,
+                        Longitude = lon, Latitude = lat, 
+                        MODIS_GPP = NA_real_)
+    } else {
+      gpp_dat <- tibble(Year = yr, 
+                        calendar_date = gpp$calendar_date,
+                        Longitude = lon, Latitude = lat,
+                        MODIS_GPP = gpp$value)
+    }
+    
+    message("\tAdding ", nrow(gpp_dat), " data rows to cache ", MODIS_GPP_CACHE)
+    cache <- bind_rows(cache, gpp_dat)
+    arrow::write_parquet(cache, MODIS_GPP_CACHE)
+  }
+}
+
+# Summarise cache, join, sanity check plot
+cache %>% 
+  # 32767 is the 'fill value' for this data product -- no measurement
+  # There are also some other values in the 32760s used for non-vegetated surfaces
+  # see https://lpdaac.usgs.gov/documents/972/MOD17_User_Guide_V61.pdf
+  mutate(MODIS_GPP = if_else(MODIS_GPP >= 32760, NA_real_, MODIS_GPP)) %>% 
+  group_by(Year, Longitude, Latitude) %>% 
+  summarise(MODIS_GPP = sum(MODIS_GPP) / 10.0, .groups = "drop") ->
+  modis_gpp_annual
+
+ggplot(world) + 
+  geom_sf() + 
+  geom_point(data = modis_gpp_annual, 
+             aes(x = Longitude, y = Latitude, color = MODIS_GPP),
+             na.rm = TRUE) + 
+  ggtitle("MOD17A2HGF GPP (annual)")
+```
+
+# Combined QAQC
 
 ```{r combine-data}
 message("Size before joins: ", nrow(srdb_sample))
@@ -516,7 +612,7 @@ message("Writing ", OUTFILE)
 write_parquet(srdb_joined, OUTFILE)
 ```
 
-## Reproducibility
+# Reproducibility
 
 ```{r}
 #| echo: false
