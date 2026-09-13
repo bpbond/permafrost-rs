@@ -312,16 +312,16 @@ message("Doing WorldClim")
 coords_worldclim <- coords
 tavg <- worldclim_global(var = "tavg", path = "data-worldclim/", res = 5)
 tavg_dat <- terra::extract(tavg, coords_worldclim[2:3])
-coords_worldclim$MAT_wc <- rowMeans(tavg_dat[-1]) 
+coords_worldclim$WC_MAT <- rowMeans(tavg_dat[-1]) 
 
 prec <- worldclim_global(var = "prec", 
                          path = "data-worldclim/", res = 5)
 prec_dat <- terra::extract(prec, coords_worldclim[2:3])
-coords_worldclim$MAP_wc <- rowSums(prec_dat[-1]) 
+coords_worldclim$WC_MAP <- rowSums(prec_dat[-1]) 
 
 # Visualize
 
-ggplot(coords_worldclim, aes(MAT_wc, MAP_wc)) + 
+ggplot(coords_worldclim, aes(WC_MAT, WC_MAP)) + 
   geom_point(na.rm = TRUE, alpha = 0.5) + 
     ggtitle("WorldClim MAT and MAP")
 ```
@@ -379,61 +379,64 @@ if(file.exists(ERA5_CACHE)) {
     cache <- tibble(Year = numeric(0), Longitude = numeric(0), Latitude = numeric(0))
 }
 
-# Get distinct year/location combinations -- that's we want to pull out of ERA5 files
-srdb_sample %>% 
-    distinct(Year, Longitude, Latitude) ->
-    srdb_yrlonlat
+# Get distinct location combinations
+# We only get ERA5 data for locations with permafrost thermal data
+pf_cache |> 
+  filter(!is.na(var_GST)) |> 
+    distinct(Longitude, Latitude) ->
+    pf_lonlat
 
 cache_hits <- 0
-for(i in seq_len(nrow(srdb_yrlonlat))) {
-    yr <- srdb_yrlonlat$Year[i]
-    lon <- srdb_yrlonlat$Longitude[i]
-    lat <- srdb_yrlonlat$Latitude[i]
-    
+for(i in seq_len(nrow(pf_lonlat))) {
+  lon <- pf_lonlat$Longitude[i]
+  lat <- pf_lonlat$Latitude[i]
+  
+  for(yr in 1995:2024) {
     # Are data already in cache?
     cache %>% 
-        filter(Year == yr, Longitude == lon, Latitude == lat) ->
-        dat
+      filter(Year == yr, Longitude == lon, Latitude == lat) ->
+      dat
     if(nrow(dat) > 0) {
-        cache_hits <- cache_hits + 1
-        #message("\t", nrow(dat), " data rows are in cache")
+      cache_hits <- cache_hits + 1
+      #message("\t", nrow(dat), " data rows are in cache")
     } else {
-        if(cache_hits > 0) { 
-            message("(", cache_hits, " cache hits)")
-            cache_hits <- 0
-        }
-        message(i, "/", nrow(srdb_yrlonlat), ": ", yr, " ", lon, " ", lat, appendLF = FALSE)
-        # Construct year-specific file name; these were downloaded from ECMWF
-        # and contain 2m temperature, soil temperature levels 1 and 2, 
-        # volumetric soil water content levels 1 and 2, total precipitation,
-        # and LAI of high and low vegetation
-        f <- file.path("data-ERA5/data-ERA5", paste0("ERA5_", yr, ".grib"))
-        if(!file.exists(f)) {
-            message("\t", f, " does not exist; skipping")
-            next
-        }
-        message("\tNo data in cache; extracting from ", f, "...")
-        x <- terra::rast(f)
-        
-        # Make sure the time period is what we're expecting
-        if(!all(year(time(x)) == yr)) {
-            stop("Year is supposed to be ", yr, " but file data dates are different!")
-        }
-        
-        # Extract, reshape, clean up
-        y <- terra::extract(x, srdb_yrlonlat[i,][-1]) # this is the expensive step
-        y %>% 
-            pivot_longer(-ID) %>% 
-            mutate(time = time(x), 
-                   Year = yr, 
-                   Longitude = lon, Latitude = lat,
-                   short_name = rep(ERA5_SHORT_NAME$short_name, length.out = n())) %>% 
-            select(Year, time, Longitude, Latitude, short_name, value) ->
-            dat
-        cache <- bind_rows(cache, dat)
-        message("\tAdding ", nrow(dat), " data rows to cache ", ERA5_CACHE, "...")
-        arrow::write_parquet(cache, ERA5_CACHE)
+      if(cache_hits > 0) { 
+        message("(", cache_hits, " cache hits)")
+        cache_hits <- 0
+      }
+      message(i, "/", nrow(pf_lonlat), ": ", yr, " ", lon, " ", lat, appendLF = FALSE)
+      # Construct year-specific file name; these were downloaded from ECMWF
+      # and contain 2m temperature, soil temperature levels 1 and 2, 
+      # volumetric soil water content levels 1 and 2, total precipitation,
+      # and LAI of high and low vegetation
+      f <- file.path("data-ERA5/data-ERA5", paste0("ERA5_", yr, ".grib"))
+      if(!file.exists(f)) {
+        message("\t", f, " does not exist; skipping")
+        next
+      }
+      message("\tNo data in cache; extracting from ", f, "...")
+      x <- terra::rast(f)
+      
+      # Make sure the time period is what we're expecting
+      if(!all(year(time(x)) == yr)) {
+        stop("Year is supposed to be ", yr, " but file data dates are different!")
+      }
+      
+      # Extract, reshape, clean up
+      y <- terra::extract(x, pf_lonlat[i,]) # this is the expensive step
+      y %>% 
+        pivot_longer(-ID) %>% 
+        mutate(time = time(x), 
+               Year = yr, 
+               Longitude = lon, Latitude = lat,
+               short_name = rep(ERA5_SHORT_NAME$short_name, length.out = n())) %>% 
+        select(Year, time, Longitude, Latitude, short_name, value) ->
+        dat
+      cache <- bind_rows(cache, dat)
+      message("\tAdding ", nrow(dat), " data rows to cache ", ERA5_CACHE, "...")
+      arrow::write_parquet(cache, ERA5_CACHE)
     }
+  } # yr loop
 }
 
 # At this point the cache data frame has all the needed data
