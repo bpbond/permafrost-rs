@@ -381,7 +381,7 @@ ERA5_CACHE <- "caches/ERA5_data_cache.parquet"
 if(file.exists(ERA5_CACHE)) {
     message("Reading cache file ", ERA5_CACHE)
     cache <- arrow::read_parquet(ERA5_CACHE)
-    message(, "\t", nrow(cache), " rows")
+    message("\t", nrow(cache), " rows")
 } else {
     message("No ERA5 data cache found")
     cache <- tibble(Year = numeric(0), Longitude = numeric(0), Latitude = numeric(0))
