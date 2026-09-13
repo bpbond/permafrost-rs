@@ -439,7 +439,8 @@ for(i in seq_len(nrow(pf_lonlat))) {
   } # yr loop
 }
 
-# At this point the cache data frame has all the needed data
+# At this point the cache data frame has all the needed data:
+# 1995-2024 ERA5 for each point permafrost-region point.
 # Reshape, summarise to annual (although this may change in
 # the future), and join with SRDB data
 message("Summarizing and joining with SRDB data...")
@@ -449,14 +450,26 @@ cache %>%
     group_by(Year, Longitude, Latitude) %>%
     summarise(ERA5_Tair = round(mean(Tair) - 273.1, 2),
               ERA5_Tsoil_lev1 = round(mean(Tsoil_lev1) - 273.1, 2),
-              ERA5_Tsoil_lev2 = round(mean(Tsoil_lev2) - 273.1, 2),
+              #ERA5_Tsoil_lev2 = round(mean(Tsoil_lev2) - 273.1, 2),
               ERA5_VWC_lev1 = round(mean(VWC_lev1), 3),
-              ERA5_VWC_lev2 = round(mean(VWC_lev2), 3),
+              #ERA5_VWC_lev2 = round(mean(VWC_lev2), 3),
               ERA5_Precip = round(sum(Precip) * 1000, 2),
               ERA5_LAI_high = round(max(LAI_high), 2),
               ERA5_LAI_low = round(max(LAI_low), 2),
               .groups = "drop") ->
     cache_summary
+
+# Compute trends - just Tair and Precip for now
+cache_summary |> 
+  select(Longitude, Latitude, Year, ERA5_Tair, ERA5_Precip) |> 
+  pivot_longer(starts_with("ERA5")) |> 
+  filter(!is.na(value)) |> 
+  group_by(Longitude, Latitude, name) |> 
+  reframe(tidy(lm(value * 10 ~ Year))) |> 
+  filter(term == "Year") |> 
+  select(Longitude, Latitude, name, trend = estimate, p.value) |> 
+  pivot_wider(names_from = "name", values_from = c("trend", "p.value")) ->
+  cache_trends
 
 srdb_sample %>% 
     left_join(cache_summary, by = c("Year", "Longitude", "Latitude")) ->
