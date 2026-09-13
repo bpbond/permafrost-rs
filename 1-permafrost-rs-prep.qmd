@@ -11,18 +11,15 @@ editor: visual
 
 **TODO:**
 
-* Add MODIS GPP (from gsbe)
-* Add some QA/QC and summary info to bottom of this
-* There's a lot of NA MAT and MAP from WorldClim (see next bullet)
-* Do I want to change to ERA5? Probably b/c that will let me get year-specific info
-* Try global Random Forest model with permafrost flag
-* CLEAN UP GRACE'S STUFF AND MERGE AND UPDATE
-* Deal with the remaining papers in my to-process folder, prioritizing high latitude ones
+- Add MODIS GPP (from gsbe)
+- Add some QA/QC and summary info to bottom of this
+- There's a lot of NA MAT and MAP from WorldClim (see next bullet)
+- Do I want to change to ERA5? Probably b/c that will let me get year-specific info
+- Try global Random Forest model with permafrost flag
+- CLEAN UP GRACE'S STUFF AND MERGE AND UPDATE
+- Deal with the remaining papers in my to-process folder, prioritizing high latitude ones
 
-
-This file does prep work for the main analysis asking
-whether permafrost _presence_ and _thermal state_ affect
-the measured soil-to-atmosphere CO2 flux ("soil respiration").
+This file does prep work for the main analysis asking whether permafrost *presence* and *thermal state* affect the measured soil-to-atmosphere CO2 flux ("soil respiration").
 
 ```{r setup}
 #| include: false
@@ -58,7 +55,7 @@ The Soil Respiration Database (SRBD) is described by [Jian et al. (2021)](https:
 
 read_csv("data-srdb/srdb-data.csv", show_col_types = FALSE) %>% 
     select(Record_number, Study_number, Author, 
-           Study_midyear, YearsOfData, 
+           Year = Study_midyear, YearsOfData, 
            Latitude, Longitude, Elevation, Manipulation, 
            Biome, Ecosystem_state, 
            Rs_annual, Rh_annual, Rs_growingseason,
@@ -68,11 +65,12 @@ read_csv("data-srdb/srdb-data.csv", show_col_types = FALSE) %>%
            SRDB_GPP = GPP, SRDB_ANPP = ANPP, SRDB_leaf_habit = Leaf_habit) %>% 
     filter(Manipulation == "None") %>% 
     filter(!Ecosystem_type %in% c("Agriculture", "Bare", "Urban")) %>% 
-    filter(!is.na(Longitude), !is.na(Latitude), !is.na(Study_midyear)) %>% 
+    filter(!is.na(Longitude), !is.na(Latitude), !is.na(Year)) %>% 
     filter(!is.na(Rs_growingseason) | !is.na(Rs_annual) | !is.na(Rh_annual)) %>% 
     select(-Elevation, -Manipulation) %>% 
     mutate(Longitude = round(Longitude, 4),
-           Latitude = round(Latitude, 4)) ->
+           Latitude = round(Latitude, 4),
+           Year = floor(Year)) ->
     srdb
 
 message(nrow(srdb), " rows of data")
@@ -119,13 +117,13 @@ srdb_sample %>%
     coords
 
 srdb_sample %>% 
-  distinct(Study_midyear, Longitude, Latitude) ->
+  distinct(Year, Longitude, Latitude) ->
   coords_yr
 ```
 
 ## ESA-CCI permafrost
 
-Our data source for permafrost temperatures is Westermann et al.: ESA permafrost Climate Change Initiative (permafrost_cci): Permafrost ground temperature for the Northern Hemisphere, v5.0, [https://doi.org/10.5285/5675B0BE944F45A8AF0E7DDBEB47A011](https://doi.org/10.5285/5675B0BE944F45A8AF0E7DDBEB47A011), 2025.
+Our data source for permafrost temperatures is Westermann et al.: ESA permafrost Climate Change Initiative (permafrost_cci): Permafrost ground temperature for the Northern Hemisphere, v5.0, <https://doi.org/10.5285/5675B0BE944F45A8AF0E7DDBEB47A011>, 2025.
 
 ```{r read-essacci-permafrost}
 #| fig-height: 6
@@ -354,6 +352,134 @@ ggplot(world) +
     geom_point(data = coords_worldclim, 
                aes(x = Longitude, y = Latitude, color = Clay)) + 
     ggtitle("WorldClim Clay")
+```
+
+## ERA5
+
+For each SRDB point we extract 2m air temperature, soil temperature and water content (levels 1 and 2), precipitation, and high-vegetation LAI from the [ERA5-Land monthly averaged data](https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land-monthly-means?tab=overview) (available from 1950 to present; I downloaded 1985-2024).
+
+These data are *big* and operations are *slow*. We use two strategies to deal with this:
+
+- Download individual-year `grib` files from the EMCWF Climate Data Store (a pain to download, but then extracting from them is relatively fast); and
+
+- Use a cache so we only process things once, hopefully
+
+```{r read-era5}
+#| fig-height: 6
+#| fig-width: 10
+
+# Load cached data if available
+ERA5_SHORT_NAME <- read_csv("data-ERA5/data-ERA5/ERA5_short_names.csv", col_types = "cc")
+ERA5_CACHE <- "caches/ERA5_data_cache.parquet"
+if(file.exists(ERA5_CACHE)) {
+    message("Reading cache file ", ERA5_CACHE)
+    cache <- arrow::read_parquet(ERA5_CACHE)    
+} else {
+    message("No ERA5 data cache found")
+    cache <- tibble(Year = numeric(0), Longitude = numeric(0), Latitude = numeric(0))
+}
+
+# Get distinct year/location combinations -- that's we want to pull out of ERA5 files
+srdb_sample %>% 
+    distinct(Year, Longitude, Latitude) ->
+    srdb_yrlonlat
+
+cache_hits <- 0
+for(i in seq_len(nrow(srdb_yrlonlat))) {
+    yr <- srdb_yrlonlat$Year[i]
+    lon <- srdb_yrlonlat$Longitude[i]
+    lat <- srdb_yrlonlat$Latitude[i]
+    
+    # Are data already in cache?
+    cache %>% 
+        filter(Year == yr, Longitude == lon, Latitude == lat) ->
+        dat
+    if(nrow(dat) > 0) {
+        cache_hits <- cache_hits + 1
+        #message("\t", nrow(dat), " data rows are in cache")
+    } else {
+        if(cache_hits > 0) { 
+            message("(", cache_hits, " cache hits)")
+            cache_hits <- 0
+        }
+        message(i, "/", nrow(srdb_yrlonlat), ": ", yr, " ", lon, " ", lat, appendLF = FALSE)
+        # Construct year-specific file name; these were downloaded from ECMWF
+        # and contain 2m temperature, soil temperature levels 1 and 2, 
+        # volumetric soil water content levels 1 and 2, total precipitation,
+        # and LAI of high and low vegetation
+        f <- file.path("data-ERA5/data-ERA5", paste0("ERA5_", yr, ".grib"))
+        if(!file.exists(f)) {
+            message("\t", f, " does not exist; skipping")
+            next
+        }
+        message("\tNo data in cache; extracting from ", f, "...")
+        x <- terra::rast(f)
+        
+        # Make sure the time period is what we're expecting
+        if(!all(year(time(x)) == yr)) {
+            stop("Year is supposed to be ", yr, " but file data dates are different!")
+        }
+        
+        # Extract, reshape, clean up
+        y <- terra::extract(x, srdb_yrlonlat[i,][-1]) # this is the expensive step
+        y %>% 
+            pivot_longer(-ID) %>% 
+            mutate(time = time(x), 
+                   Year = yr, 
+                   Longitude = lon, Latitude = lat,
+                   short_name = rep(ERA5_SHORT_NAME$short_name, length.out = n())) %>% 
+            select(Year, time, Longitude, Latitude, short_name, value) ->
+            dat
+        cache <- bind_rows(cache, dat)
+        message("\tAdding ", nrow(dat), " data rows to cache ", ERA5_CACHE, "...")
+        arrow::write_parquet(cache, ERA5_CACHE)
+    }
+}
+
+# At this point the cache data frame has all the needed data
+# Reshape, summarise to annual (although this may change in
+# the future), and join with SRDB data
+message("Summarizing and joining with SRDB data...")
+cache %>% 
+    mutate(time = as.Date(time)) %>% 
+    pivot_wider(names_from = "short_name") %>% 
+    group_by(Year, Longitude, Latitude) %>%
+    summarise(ERA5_Tair = round(mean(Tair) - 273.1, 2),
+              ERA5_Tsoil_lev1 = round(mean(Tsoil_lev1) - 273.1, 2),
+              ERA5_Tsoil_lev2 = round(mean(Tsoil_lev2) - 273.1, 2),
+              ERA5_VWC_lev1 = round(mean(VWC_lev1), 3),
+              ERA5_VWC_lev2 = round(mean(VWC_lev2), 3),
+              ERA5_Precip = round(sum(Precip) * 1000, 2),
+              ERA5_LAI_high = round(max(LAI_high), 2),
+              ERA5_LAI_low = round(max(LAI_low), 2),
+              .groups = "drop") ->
+    cache_summary
+
+srdb_sample %>% 
+    left_join(cache_summary, by = c("Year", "Longitude", "Latitude")) ->
+    srdb_sample
+
+# A few sanity check plots
+ggplot(world) + 
+    geom_sf() + 
+    geom_point(data = srdb_sample, 
+               aes(x = Longitude, y = Latitude, color = ERA5_Tair),
+               na.rm = TRUE) + 
+    ggtitle("SRDB with ERA5 2m air temperature")
+
+ggplot(world) + 
+    geom_sf() + 
+    geom_point(data = srdb_sample, 
+               aes(x = Longitude, y = Latitude, color = ERA5_Precip),
+               na.rm = TRUE) + 
+    ggtitle("SRDB with ERA5 total precipitation")
+
+ggplot(world) + 
+    geom_sf() + 
+    geom_point(data = srdb_sample, 
+               aes(x = Longitude, y = Latitude, color = ERA5_LAI_high),
+               na.rm = TRUE) + 
+    ggtitle("SRDB with ERA5 max high LAI")
 ```
 
 ## Combined QAQC
