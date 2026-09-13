@@ -11,7 +11,6 @@ editor: visual
 
 **TODO:**
 
-- Add MODIS GPP (from gsbe)
 - There's a lot of NA MAT and MAP from WorldClim, and >=1 from ERA5
 - Add some QA/QC and summary info to bottom of this - what sites don't have climate data? How many pf sites?
 - Try global Random Forest model with permafrost flag
