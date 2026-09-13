@@ -463,10 +463,10 @@ cache %>%
               ERA5_LAI_high = round(max(LAI_high), 2),
               ERA5_LAI_low = round(max(LAI_low), 2),
               .groups = "drop") ->
-    cache_summary
+    era5_annual
 
 # Compute trends - just Tair and Precip for now
-cache_summary |> 
+era5_annual |> 
   select(Longitude, Latitude, Year, ERA5_Tair, ERA5_Precip) |> 
   pivot_longer(starts_with("ERA5")) |> 
   filter(!is.na(value)) |> 
@@ -475,33 +475,24 @@ cache_summary |>
   filter(term == "Year") |> 
   select(Longitude, Latitude, name, trend = estimate, p.value) |> 
   pivot_wider(names_from = "name", values_from = c("trend", "p.value")) ->
-  cache_trends
-
-srdb_sample %>% 
-    left_join(cache_summary, by = c("Year", "Longitude", "Latitude")) ->
-    srdb_sample
+  era5_trends
 
 # A few sanity check plots
 ggplot(world) + 
-    geom_sf() + 
-    geom_point(data = srdb_sample, 
-               aes(x = Longitude, y = Latitude, color = ERA5_Tair),
-               na.rm = TRUE) + 
-    ggtitle("SRDB with ERA5 2m air temperature")
+  geom_sf() + 
+  geom_point(data = era5_trends, 
+             aes(x = Longitude, y = Latitude, color = trend_ERA5_Tair),
+             na.rm = TRUE) + 
+  coord_sf(ylim = c(25, 85)) +
+  ggtitle("ERA5 2m air temperature trends (degC/decade)")
 
 ggplot(world) + 
-    geom_sf() + 
-    geom_point(data = srdb_sample, 
-               aes(x = Longitude, y = Latitude, color = ERA5_Precip),
-               na.rm = TRUE) + 
-    ggtitle("SRDB with ERA5 total precipitation")
-
-ggplot(world) + 
-    geom_sf() + 
-    geom_point(data = srdb_sample, 
-               aes(x = Longitude, y = Latitude, color = ERA5_LAI_high),
-               na.rm = TRUE) + 
-    ggtitle("SRDB with ERA5 max high LAI")
+  geom_sf() + 
+  geom_point(data = era5_trends, 
+             aes(x = Longitude, y = Latitude, color = trend_ERA5_Precip),
+             na.rm = TRUE) + 
+  coord_sf(ylim = c(25, 85)) +
+  ggtitle("ERA5 precip trends (cm/decade)")
 ```
 
 ## Combined QAQC
