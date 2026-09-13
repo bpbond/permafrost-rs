@@ -12,14 +12,15 @@ editor: visual
 **TODO:**
 
 - Add MODIS GPP (from gsbe)
-- Add some QA/QC and summary info to bottom of this
-- There's a lot of NA MAT and MAP from WorldClim (see next bullet)
-- Do I want to change to ERA5? Probably b/c that will let me get year-specific info
+- There's a lot of NA MAT and MAP from WorldClim, and >=1 from ERA5
+- Add some QA/QC and summary info to bottom of this - what sites don't have climate data? How many pf sites?
 - Try global Random Forest model with permafrost flag
 - CLEAN UP GRACE'S STUFF AND MERGE AND UPDATE
 - Deal with the remaining papers in my to-process folder, prioritizing high latitude ones
 
-This file does prep work for the main analysis asking whether permafrost *presence* and *thermal state* affect the measured soil-to-atmosphere CO2 flux ("soil respiration").
+This file does prep work for the main analysis asking whether permafrost
+*presence* and *thermal state* affect the measured soil-to-atmosphere 
+CO2 flux ("soil respiration").
 
 ```{r setup}
 #| include: false
@@ -364,6 +365,9 @@ These data are *big* and operations are *slow*. We use two strategies to deal wi
 
 - Use a cache so we only process things once, hopefully
 
+Extract data for 1995-2024; compute annual values; compute trends
+for Tair and Precip; and match individual-year values to SRDB year.
+
 ```{r read-era5}
 #| fig-height: 6
 #| fig-width: 10
@@ -372,8 +376,9 @@ These data are *big* and operations are *slow*. We use two strategies to deal wi
 ERA5_SHORT_NAME <- read_csv("data-ERA5/data-ERA5/ERA5_short_names.csv", col_types = "cc")
 ERA5_CACHE <- "caches/ERA5_data_cache.parquet"
 if(file.exists(ERA5_CACHE)) {
-    message("Reading cache file ", ERA5_CACHE)
-    cache <- arrow::read_parquet(ERA5_CACHE)    
+    message("Reading cache file ", ERA5_CACHE, "...")
+    cache <- arrow::read_parquet(ERA5_CACHE)
+    message(, "\t", nrow(cache), " rows")
 } else {
     message("No ERA5 data cache found")
     cache <- tibble(Year = numeric(0), Longitude = numeric(0), Latitude = numeric(0))
@@ -391,6 +396,7 @@ for(i in seq_len(nrow(pf_lonlat))) {
   lon <- pf_lonlat$Longitude[i]
   lat <- pf_lonlat$Latitude[i]
   
+  # 1994-2024 is 30 year period that covers the permafrost thermal dataset
   for(yr in 1995:2024) {
     # Are data already in cache?
     cache %>% 
