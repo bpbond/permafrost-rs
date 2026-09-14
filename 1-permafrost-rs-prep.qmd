@@ -176,7 +176,7 @@ if(nrow(coords_no_data) > 0) {
       # Convert to spatial raster, specifying lon/lat extent
       dat_rast <- rast(dat_matrix, 
                        extent = c(-180, 180, 25, 85), 
-                       crs="+proj=longlat +datum=WGS84")
+                       crs = "+proj=longlat +datum=WGS84")
       message("\tExtracting points...")
       xdat <- terra::extract(dat_rast,
                              coords_no_data[c("Longitude", "Latitude")])
@@ -552,7 +552,8 @@ for(i in seq_len(nrow(coords_yr))) {
       gpp <- mt_subset("MOD17A2HGF", 
                        band = "Gpp_500m", 
                        lat = lat, lon = lon, 
-                       start = paste0(yr, "-01-01"), end = paste0(yr, "-12-31"))
+                       start = paste0(yr, "-01-01"), 
+                       end = paste0(yr, "-12-31"))
     })
     if(is.null(gpp)) {
       gpp_dat <- tibble(Year = yr, 

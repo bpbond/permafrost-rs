@@ -11,26 +11,15 @@ editor: visual
 
 ## Science question and hypotheses
 
-Permafrost is warming and potentially throughout 
-the circumpolar boreal and arctic regions.
+Permafrost is warming and potentially throughout the circumpolar boreal and arctic regions.
 
-Increases in the active layer depth should, over time, put more SOC in 
-play for decomposition: both because of the warming temperature and, 
-crucially, the phase change of ice to water.
+Increases in the active layer depth should, over time, put more SOC in play for decomposition: both because of the warming temperature and, crucially, the phase change of ice to water.
 
-The land-surface model CryoGrid 3 
-([Westermann et al. 2016](https://doi.org/10.5194/gmd-9-523-2016)) is driven
-by time series of air temperature T air, RH, wind speed, incoming shortwave 
-and long-wave radiation, air pressure, and rates of snowfall and rainfall.
-This is used to produce the ESA Climate Change Initiative dataset of 
-permafrost 1997-2023 thermal state 
-([Westermann et al. 2025](https://doi.org/10.5285/5675B0BE944F45A8AF0E7DDBEB47A011)).
+The land-surface model CryoGrid 3 ([Westermann et al. 2016](https://doi.org/10.5194/gmd-9-523-2016)) is driven by time series of air temperature T air, RH, wind speed, incoming shortwave and long-wave radiation, air pressure, and rates of snowfall and rainfall. This is used to produce the ESA Climate Change Initiative dataset of permafrost 1997-2023 thermal state ([Westermann et al. 2025](https://doi.org/10.5285/5675B0BE944F45A8AF0E7DDBEB47A011)).
 
 ### Hypothesis 1
 
-Accounting for permafrost presence should improve global model performance
-in predicting soil respiration (annual, annual heterotrophic, 
-and growing season mean).
+Accounting for permafrost presence should improve global model performance in predicting soil respiration (annual, annual heterotrophic, and growing season mean).
 
 **This effect will occur for all three observed fluxes.**
 
@@ -45,14 +34,58 @@ How to test: a standard Random Forest model using
 
 ### Hypothesis 2
 
-Focusing on the permafrost region, thermal state (temperature and 1997-2023
-temperature trend) will improve performance against observations, 
-specifically *increasing* predicted respiration (because of more SOC 
-available for decomposition)
+Focusing on the permafrost region, thermal state (temperature and 1997-2023 temperature trend) will improve performance against observations, specifically *increasing* predicted respiration (because of more SOC available for decomposition)
 
 **This effect will be occur only for `Rs_growingseason`, i.e. the growing season mean.**
 
-## Hypothesis 3
+### Hypothesis 3
 
-If H2 is true, this lets us estimate the change in soil-to-atmosphere carbon 
-flux due to permafrost thaw. (Not really a hypothesis.)
+If H2 is true, this lets us estimate the change in soil-to-atmosphere carbon flux due to permafrost thaw. (Not really a hypothesis.)
+
+## Data sources
+
+### SRDB
+
+In `1-permafrost-rs-prep.qmd` we load the global soil respiration 
+database (SRDB) and filter for:
+
+* No experimental manipulation
+* No agriculture, bare soil, or urban ecosystem type
+* Latitude, longitude, and year of measurement all present
+* Either `Rs_annual` or `Rs_growingseason`, or both, is given
+
+This produces a dataset of TODO observations at TODO different sites:
+
+* TODO `Rs_annual` observations
+* TODO `Rs_growingseason` observations
+
+### Permafrost thermal state
+
+The data source for permafrost temperatures is Westermann et al.: 
+ESA permafrost Climate Change Initiative (permafrost_cci): 
+Permafrost ground temperature for the Northern Hemisphere, v5.0, <https://doi.org/10.5285/5675B0BE944F45A8AF0E7DDBEB47A011>, 2025.
+
+This dataset derives from 
+[Westermann et al. 2016](https://gmd.copernicus.org/articles/9/523/2016/)
+
+RESOLUTION? TODO
+
+These data are 1997-2023. For each SRDB observation in that time 
+range, we extract:
+
+* `GST` - Surface temperature
+* `GST_uncertainty` - Uncertainty of surface temperature
+* `T1m` - Temperature at 1m depth
+* `T1m_uncertainty` - Uncertainty of 1m temperature
+
+...and in addition compute, for each geographic point, the 
+1997-2023 trend (degC/decade) for the two temperature time series.
+
+### Ancillary data
+
+These include:
+
+* WorldClim data for climatology (air temperature and precipitation), soil type, and land cover (0.5' = ~0.008° resolution)
+* ERA5 for 1995-2024 air temperature, soil temperature, precipitation, and soil volumetric water content (~0.08°)
+* ERA5 for low and high LAI and soil type (~0.08°)
+* MODIS MOD17A2HGF GPP (500m)
