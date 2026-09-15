@@ -11,15 +11,15 @@ editor: visual
 
 **TODO:**
 
+- Compute mean permafrost temperature for each point; that, with slope, will allow prediction (since we will want a time-varying independent variable)
+- How tightly related are GST and T1m? How well are they related to Tair ot Tsoil from ERA5?
 - There's a lot of NA MAT and MAP from WorldClim, and >=1 from ERA5
 - Add some QA/QC and summary info to bottom of this - what sites don't have climate data? How many pf sites?
 - Try global Random Forest model with permafrost flag
 - CLEAN UP GRACE'S STUFF AND MERGE AND UPDATE
 - Deal with the remaining papers in my to-process folder, prioritizing high latitude ones
 
-This file does prep work for the main analysis asking whether permafrost
-*presence* and *thermal state* affect the measured soil-to-atmosphere 
-CO2 flux ("soil respiration").
+This file does prep work for the main analysis asking whether permafrost *presence* and *thermal state* affect the measured soil-to-atmosphere CO2 flux ("soil respiration").
 
 ```{r setup}
 #| include: false
@@ -107,10 +107,10 @@ ggplot(world) +
 
 # Subsample SRDB data for quick testing
 set.seed(12)
-srdb %>%
-  filter(Latitude > 50) |> 
-    slice_sample(n = 100) ->
-    srdb_sample
+# srdb %>%
+#   filter(Latitude > 50) |> 
+#     slice_sample(n = 100) ->
+#     srdb_sample
 srdb_sample <- srdb
 
 srdb_sample %>% 
@@ -124,7 +124,10 @@ srdb_sample %>%
 
 # ESA-CCI permafrost
 
-Our data source for permafrost temperatures is Westermann et al.: ESA permafrost Climate Change Initiative (permafrost_cci): Permafrost ground temperature for the Northern Hemisphere, v5.0, <https://doi.org/10.5285/5675B0BE944F45A8AF0E7DDBEB47A011>, 2025.
+Our data source for permafrost temperatures is Westermann et al.: 
+ESA permafrost Climate Change Initiative (permafrost_cci): 
+Permafrost ground temperature for the Northern Hemisphere, v5.0,
+<https://doi.org/10.5285/5675B0BE944F45A8AF0E7DDBEB47A011>, 2025.
 
 ```{r read-essacci-permafrost}
 #| fig-height: 6
@@ -200,26 +203,32 @@ if(nrow(coords_no_data) > 0) {
   arrow::write_parquet(pf_cache, PERMAFROST_CACHE)
 }
 
-
-p <- ggplot(filter(pf_cache, !is.na(var_T1m)), 
-            aes(Year, var_T1m, color = Latitude, group = Record_number)) +
-  geom_line(na.rm = TRUE) 
-print(p)
-
 pf_cache |> 
-  filter(!is.na(var_T1m)) |> 
+  filter(!is.na(var_T1m)) ->
+  pf_cache_good
+
+ggplot(pf_cache_good,
+       aes(Year, var_T1m, color = Latitude, group = Record_number)) +
+  geom_line() + 
+  ggtitle("1m permafrost temperatures over time")
+
+ggplot(pf_cache_good,
+       aes(var_GST, var_T1m, color = Latitude)) +
+  geom_point(size = 0.5) + 
+  ggtitle("Surface versus 1m permafrost temperatures")
+
+pf_cache_good |> 
   distinct(Record_number, Year, Latitude, Longitude) ->
   pf_points
 ```
 
-OK!
+For each point, compute mean, trend, and p-value of that trend.
 
 ```{r permafrost-stats}
 #| fig-width: 12
 
 message("Computing means and trends...")
-pf_cache |> 
-  na.omit() |> 
+pf_cache_good |> 
   select(Record_number, Longitude, Latitude, Year, starts_with("var_")) |> 
   select(-ends_with("uncertainty")) ->
   results_non_uncertainty
@@ -267,17 +276,20 @@ results_mean |>
 ggplot(world) + 
     geom_sf() + 
     geom_point(data = pf_stats, 
-               aes(x = Longitude, y = Latitude, color = var_T1m_mean)) + 
+               aes(x = Longitude, y = Latitude, 
+                   color = var_T1m_mean)) + 
   coord_sf(ylim = c(25, 85)) +
     ggtitle(paste0("Permafrost T1m (degC) N=", nrow(pf_stats)))
 
 ggplot(world) + 
     geom_sf() + 
     geom_point(data = pf_stats, 
-               aes(x = Longitude, y = Latitude, color = var_T1m_trend)) + 
+               aes(x = Longitude, y = Latitude, 
+                   color = var_T1m_trend)) + 
   coord_sf(ylim = c(25, 85)) +
     ggtitle(paste0("Permafrost var_T1m_trend (degC/decade) N=", nrow(pf_stats)))
 
+ggplot(pf_stats, aes(x = var_T1m_trend)) + geom_histogram(bins = 30)
 ```
 
 ```{r trend-visualization}
@@ -359,7 +371,10 @@ ggplot(world) +
 
 ## ERA5
 
-For each SRDB point we extract 2m air temperature, soil temperature and water content (levels 1 and 2), precipitation, and high-vegetation LAI from the [ERA5-Land monthly averaged data](https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land-monthly-means?tab=overview) (available from 1950 to present; I downloaded 1985-2024).
+For each SRDB point we extract 2m air temperature, soil temperature and water
+content (levels 1 and 2), precipitation, and high-vegetation LAI from the 
+[ERA5-Land monthly averaged data](https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land-monthly-means?tab=overview) 
+(available from 1950 to present; I downloaded 1985-2024).
 
 These data are *big* and operations are *slow*. We use two strategies to deal with this:
 
@@ -383,7 +398,9 @@ if(file.exists(ERA5_CACHE)) {
     message("\t", nrow(cache), " rows")
 } else {
     message("No ERA5 data cache found")
-    cache <- tibble(Year = numeric(0), Longitude = numeric(0), Latitude = numeric(0))
+    cache <- tibble(Year = numeric(0), 
+                    Longitude = numeric(0),
+                    Latitude = numeric(0))
 }
 
 # Get distinct location combinations
@@ -413,10 +430,10 @@ for(i in seq_len(nrow(pf_lonlat))) {
         cache_hits <- 0
       }
       message(i, "/", nrow(pf_lonlat), ": ", yr, " ", lon, " ", lat, appendLF = FALSE)
-      # Construct year-specific file name; these were downloaded from ECMWF
-      # and contain 2m temperature, soil temperature levels 1 and 2, 
-      # volumetric soil water content levels 1 and 2, total precipitation,
-      # and LAI of high and low vegetation
+      # Construct year-specific file name; these were downloaded
+      # from ECMWF and contain 2m temperature, soil temperature
+      # levels 1 and 2,  volumetric soil water content levels 1 
+      # and 2, total precipitation, and high and lower veg LAI
       f <- file.path("data-ERA5/data-ERA5", paste0("ERA5_", yr, ".grib"))
       if(!file.exists(f)) {
         message("\t", f, " does not exist; skipping")
@@ -427,7 +444,8 @@ for(i in seq_len(nrow(pf_lonlat))) {
       
       # Make sure the time period is what we're expecting
       if(!all(year(time(x)) == yr)) {
-        stop("Year is supposed to be ", yr, " but file data dates are different!")
+        stop("Year is supposed to be ", yr,
+             " but file data dates are different!")
       }
       
       # Extract, reshape, clean up
@@ -604,7 +622,7 @@ srdb_sample |>
 message("Size after joins: ", nrow(srdb_joined))
 ```
 
-Writing data to file for next step in the analysis.
+Write data to file for next step in the analysis.
 
 ```{r write-data}
 OUTFILE <- "srdb_joined_data.parquet"
@@ -614,7 +632,7 @@ write_parquet(srdb_joined, OUTFILE)
 
 # Reproducibility
 
-```{r}
+```{r reproducibility}
 #| echo: false
 
 sessionInfo()
