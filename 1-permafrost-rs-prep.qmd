@@ -11,14 +11,12 @@ editor: visual
 
 **TODO:**
 
-- Compute mean permafrost temperature for each point; that, with slope, will allow prediction (since we will want a time-varying independent variable)
-- How tightly related are GST and T1m? How well are they related to Tair ot Tsoil from ERA5?
-- There's a lot of NA MAT and MAP from WorldClim, and >=1 from ERA5
-- Add some QA/QC and summary info to bottom of this - what sites don't have climate data? How many pf sites?
+- How tightly related are GST and T1m? How well are they related to Tair or Tsoil from ERA5?
 - Try global Random Forest model with permafrost flag
 - CLEAN UP GRACE'S STUFF AND MERGE AND UPDATE
 - Deal with the remaining papers in my to-process folder, prioritizing high latitude ones
 - Find and fix NA biomes
+- Read about VIF
 
 This file does prep work for the main analysis asking whether permafrost *presence* and *thermal state* affect the measured soil-to-atmosphere CO2 flux ("soil respiration").
 
@@ -664,6 +662,10 @@ srdb_sample |>
   srdb_joined
 
 message("Size after joins: ", nrow(srdb_joined), " x ", ncol(srdb_joined))
+
+message("NA PF_GST_mean records: ", sum(is.na(srdb_joined$PF_GST_mean)))
+message("NA WC_MAT records: ", sum(is.na(srdb_joined$WC_MAT)))
+message("NA ERA_Tair records: ", sum(is.na(srdb_joined$ERA5_Tair)))
 ```
 
 Write data to file for next step in the analysis.
