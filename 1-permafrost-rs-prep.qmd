@@ -18,6 +18,7 @@ editor: visual
 - Try global Random Forest model with permafrost flag
 - CLEAN UP GRACE'S STUFF AND MERGE AND UPDATE
 - Deal with the remaining papers in my to-process folder, prioritizing high latitude ones
+- Find and fix NA biomes
 
 This file does prep work for the main analysis asking whether permafrost *presence* and *thermal state* affect the measured soil-to-atmosphere CO2 flux ("soil respiration").
 
@@ -103,15 +104,21 @@ ggplot(world) +
 ```
 
 ```{r srdb-prep}
-#| fig-width: 12
 
 # Subsample SRDB data for quick testing
-set.seed(12)
+set.seed(123)
 # srdb %>%
 #   filter(Latitude > 50) |> 
 #     slice_sample(n = 100) ->
 #     srdb_sample
 srdb_sample <- srdb
+
+srdb_sample %>% 
+    filter(Rs_annual > 0) %>% 
+    transmute(`sqrt(Rs_growingseason)` = sqrt(Rs_growingseason),
+              `sqrt(Rs_annual)` = sqrt(Rs_annual), 
+              `sqrt(Rh_annual)` = sqrt(Rh_annual)) %>% 
+    pairs()
 
 srdb_sample %>% 
     select(Record_number, Longitude, Latitude) ->
@@ -183,7 +190,7 @@ if(nrow(coords_no_data) > 0) {
       message("\tExtracting points...")
       xdat <- terra::extract(dat_rast,
                              coords_no_data[c("Longitude", "Latitude")])
-      coords_no_data[paste0("var_", v)] <- xdat[2]
+      coords_no_data[paste0("PF_", v)] <- xdat[2]
     }
     rm(dat_matrix, dat_rast) # clean up; these are big
     
@@ -204,38 +211,47 @@ if(nrow(coords_no_data) > 0) {
 }
 
 pf_cache |> 
-  filter(!is.na(var_T1m)) ->
+  filter(!is.na(PF_T1m)) ->
   pf_cache_good
 
 ggplot(pf_cache_good,
-       aes(Year, var_T1m, color = Latitude, group = Record_number)) +
+       aes(Year, PF_T1m, color = Latitude, group = Record_number)) +
   geom_line() + 
   ggtitle("1m permafrost temperatures over time")
 
 ggplot(pf_cache_good,
-       aes(var_GST, var_T1m, color = Latitude)) +
+       aes(PF_GST, PF_T1m, color = Latitude)) +
   geom_point(size = 0.5) + 
   ggtitle("Surface versus 1m permafrost temperatures")
 
 pf_cache_good |> 
-  distinct(Record_number, Year, Latitude, Longitude) ->
+  distinct(Record_number, Year, Longitude, Latitude) ->
   pf_points
 ```
 
-For each point, compute mean, trend, and p-value of that trend.
+Dataset | N 
+ -- | --
+SRDB entries | `r nrow(srdb_sample)`
+SRDB geographic points | `r nrow(coords_yr |> distinct(Longitude, Latitude))`
+SRDB entries with permafrost| `r nrow(pf_cache_good)`
+SRDB year-geographic points with permafrost| `r nrow(pf_cache_good |> distinct(Latitude, Longitude))`
+
+## Permafrost trends
+
+For each geographic point, compute mean, trend, and p-value of that trend.
 
 ```{r permafrost-stats}
 #| fig-width: 12
 
 message("Computing means and trends...")
 pf_cache_good |> 
-  select(Record_number, Longitude, Latitude, Year, starts_with("var_")) |> 
+  select(Record_number, Longitude, Latitude, Year, starts_with("PF_")) |> 
   select(-ends_with("uncertainty")) ->
   results_non_uncertainty
 
 # Compute means
 results_non_uncertainty |> 
-  pivot_longer(starts_with("var_")) |> 
+  pivot_longer(starts_with("PF_")) |> 
   group_by(Record_number, Longitude, Latitude, name) |> 
   summarise(value = mean(value), .groups = "drop") |> 
   mutate(name = paste0(name, "_mean")) |> 
@@ -244,7 +260,7 @@ results_non_uncertainty |>
 
 # Compute trends
 results_non_uncertainty |> 
-  pivot_longer(starts_with("var_")) |> 
+  pivot_longer(starts_with("PF_")) |> 
   filter(!is.na(value)) |> 
   group_by(Record_number, Longitude, Latitude, name) |> 
   reframe(lm(value ~ Year) |> tidy()) |> 
@@ -277,36 +293,27 @@ ggplot(world) +
     geom_sf() + 
     geom_point(data = pf_stats, 
                aes(x = Longitude, y = Latitude, 
-                   color = var_T1m_mean)) + 
+                   color = PF_T1m_mean)) + 
   coord_sf(ylim = c(25, 85)) +
     ggtitle(paste0("Permafrost T1m (degC) N=", nrow(pf_stats)))
 
-ggplot(world) + 
-    geom_sf() + 
-    geom_point(data = pf_stats, 
-               aes(x = Longitude, y = Latitude, 
-                   color = var_T1m_trend)) + 
-  coord_sf(ylim = c(25, 85)) +
-    ggtitle(paste0("Permafrost var_T1m_trend (degC/decade) N=", nrow(pf_stats)))
-
-ggplot(pf_stats, aes(x = var_T1m_trend)) + geom_histogram(bins = 30)
-```
-
-```{r trend-visualization}
-#| fig-width: 12
+ggplot(pf_stats, aes(x = PF_T1m_trend)) + 
+  geom_histogram(bins = 30) +
+  ggtitle("Permafrost trends (degC/decade)")
 
 ggplot(pf_stats, 
-       aes(x = var_T1m_mean, y = Latitude, 
-           color = var_T1m_trend)) + 
+       aes(x = PF_T1m_mean, y = Latitude, 
+           color = PF_T1m_trend)) + 
   geom_point() +
   ggtitle("Trend versus latitude")
 
 # Categorical (cooling/no sig. change/warming) trend map
 pf_stats |> 
-  mutate(Trend = if_else(var_T1m_p.value >= 0.05, "None",
-                         if_else(var_T1m_trend < 0, 
+  mutate(Trend = if_else(PF_T1m_p.value >= 0.05, "None",
+                         if_else(PF_T1m_trend < 0, 
                                  "Cooling", "Warming"))) ->
   results_categorical
+
 ggplot(world) + 
     geom_sf() + 
     geom_point(data = results_categorical, 
@@ -351,25 +358,19 @@ for(cov in c("trees", "grassland", "shrubs", "bare", "wetland", "moss")) {
   cover <- landcover(cov, path = "data-worldclim/")
   plot(cover, main = cov)
   cover_dat <- terra::extract(cover, coords_worldclim[2:3])
-  coords_worldclim[[paste0("cover_", cov)]] <- cover_dat[,2]
+  coords_worldclim[[paste0("WC_", cov)]] <- cover_dat[,2]
 }
 
 message("Doing clay...")
 clay <- soil_world("clay", depth = 5, stat = "mean", 
                    path = "data-worldclim/")
+plot(clay, main = "clay")
 clay_dat <- terra::extract(clay, coords_worldclim[2:3])
-coords_worldclim$Clay <- clay_dat[,2]
+coords_worldclim$WC_clay <- clay_dat[,2]
 
-# Visualize
-
-ggplot(world) + 
-    geom_sf() + 
-    geom_point(data = coords_worldclim, 
-               aes(x = Longitude, y = Latitude, color = Clay)) + 
-    ggtitle("WorldClim Clay")
 ```
 
-## ERA5
+## ERA5 climate
 
 For each SRDB point we extract 2m air temperature, soil temperature and water
 content (levels 1 and 2), precipitation, and high-vegetation LAI from the 
@@ -406,7 +407,7 @@ if(file.exists(ERA5_CACHE)) {
 # Get distinct location combinations
 # We only get ERA5 data for locations with permafrost thermal data
 pf_cache |> 
-  filter(!is.na(var_GST)) |> 
+  filter(!is.na(PF_GST)) |> 
     distinct(Longitude, Latitude) ->
     pf_lonlat
 
@@ -423,7 +424,6 @@ for(i in seq_len(nrow(pf_lonlat))) {
       dat
     if(nrow(dat) > 0) {
       cache_hits <- cache_hits + 1
-      #message("\t", nrow(dat), " data rows are in cache")
     } else {
       if(cache_hits > 0) { 
         message("(", cache_hits, " cache hits)")
@@ -469,7 +469,7 @@ for(i in seq_len(nrow(pf_lonlat))) {
 # 1995-2024 ERA5 for each point permafrost-region point.
 # Reshape, summarise to annual (although this may change in
 # the future), and join with SRDB data
-message("Summarizing and joining with SRDB data...")
+message("All done with ERA5 extractions")
 cache %>% 
     mutate(time = as.Date(time)) %>% 
     pivot_wider(names_from = "short_name") %>% 
@@ -506,6 +506,10 @@ ggplot(world) +
   coord_sf(ylim = c(25, 85)) +
   ggtitle("ERA5 2m air temperature trends (degC/decade)")
 
+ggplot(era5_trends, aes(x = trend_ERA5_Tair)) + 
+  geom_histogram(bins = 30) +
+  ggtitle("ERA5 Tair trends (degC/decade)")
+
 ggplot(world) + 
   geom_sf() + 
   geom_point(data = era5_trends, 
@@ -513,6 +517,43 @@ ggplot(world) +
              na.rm = TRUE) + 
   coord_sf(ylim = c(25, 85)) +
   ggtitle("ERA5 precip trends (cm/decade)")
+```
+
+## ERA5 veg and soil
+
+## Vegetation and soil type data
+
+The vegetation and soil data are also from ERA5 but thankfully they're not time-varying, so fast and easy to extract.
+
+```{r read-veg-soil-types}
+#| warning: false
+#| fig-width: 12
+
+# Extract soil data for SRDB points
+soil <- rast("data-ERA5/data-ERA5/ERA5_soil_type.grib")
+plot(soil, main = "ERA5 soil type")
+soil_dat <- terra::extract(soil, coords[2:3])
+names(soil_dat) <- c("ID", "ERA5_soil_number")
+
+# Attach names to numeric codes
+soil_dat$ERA5_soil_number <- as.character(soil_dat$ERA5_soil_number) # for join below
+soil_names <- tibble(strings = strsplit(units(soil), "; ")[[1]]) |>  
+    separate(strings, into = c("ERA5_soil_number", "ERA5_soil_name"), 
+             convert = TRUE, sep = "=")
+soil_dat <- soil_dat %>% left_join(soil_names, by = "ERA5_soil_number")
+
+# Extract vegetation data
+tvh <- rast("data-ERA5/data-ERA5/ERA5_tvh.grib")
+plot(tvh, main = "ERA5 high vegetation type")
+tvh_dat <- terra::extract(tvh, coords[2:3])
+names(tvh_dat) <- c("ID", "ERA5_veg_high")
+tvl <- rast("data-ERA5/data-ERA5/ERA5_tvl.grib")
+plot(tvl, main = "ERA5 low vegetation type")
+tvl_dat <- terra::extract(tvl, coords[2:3])
+names(tvl_dat) <- c("ID", "ERA5_veg_low")
+
+#lcc <- read_csv("data-ERA5/ECMWF_land_cover_codes.csv", col_types = "cc")
+era5_soil_veg <- bind_cols(coords, soil_dat[-1], tvh_dat[-1], tvl_dat[-1])
 ```
 
 ## MODIS 8-day GPP
@@ -554,10 +595,9 @@ for(i in seq_len(nrow(coords_yr))) {
     filter(Year == yr, Longitude == lon, Latitude == lat) ->
     dat
   if(nrow(dat) > 0) {
-    #message("\t", nrow(dat), " data rows are in cache")
     cache_hits <- cache_hits + 1
   } else {
-    # Need to use MODISTools to download the needed data
+    # Use MODISTools to download the needed data
     if(cache_hits > 0) { 
       message("(", cache_hits, " cache hits)")
       cache_hits <- 0
@@ -612,14 +652,18 @@ ggplot(world) +
 # Combined QAQC
 
 ```{r combine-data}
-message("Size before joins: ", nrow(srdb_sample))
+message("Size before joins: ", nrow(srdb_sample), " x ", ncol(srdb_sample))
 
 srdb_sample |> 
-  left_join(pf_stats, by = join_by("Record_number", "Latitude", "Longitude")) |> 
-  left_join(coords_worldclim, by = join_by("Record_number", "Latitude", "Longitude")) -> 
+  left_join(pf_stats, by = c("Record_number", "Longitude", "Latitude")) |> 
+  left_join(coords_worldclim, by = c("Record_number", "Longitude", "Latitude")) |> 
+  left_join(era5_annual, by = c("Longitude", "Latitude", "Year")) |> 
+  left_join(era5_soil_veg, by = c("Record_number", "Longitude", "Latitude")) |> 
+  left_join(modis_gpp_annual, by = c("Longitude", "Latitude", "Year")) |> 
+  left_join(era5_trends, by = c("Longitude", "Latitude")) -> 
   srdb_joined
 
-message("Size after joins: ", nrow(srdb_joined))
+message("Size after joins: ", nrow(srdb_joined), " x ", ncol(srdb_joined))
 ```
 
 Write data to file for next step in the analysis.
