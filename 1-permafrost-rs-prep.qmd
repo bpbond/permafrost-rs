@@ -113,13 +113,6 @@ set.seed(123)
 srdb_sample <- srdb
 
 srdb_sample %>% 
-    filter(Rs_annual > 0) %>% 
-    transmute(`sqrt(Rs_growingseason)` = sqrt(Rs_growingseason),
-              `sqrt(Rs_annual)` = sqrt(Rs_annual), 
-              `sqrt(Rh_annual)` = sqrt(Rh_annual)) %>% 
-    pairs()
-
-srdb_sample %>% 
     select(Record_number, Longitude, Latitude) ->
     coords
 
@@ -664,9 +657,39 @@ srdb_sample |>
 
 message("Size after joins: ", nrow(srdb_joined), " x ", ncol(srdb_joined))
 
+```
+
+
 message("NA PF_GST_mean records: ", sum(is.na(srdb_joined$PF_GST_mean)))
 message("NA WC_MAT records: ", sum(is.na(srdb_joined$WC_MAT)))
 message("NA ERA_Tair records: ", sum(is.na(srdb_joined$ERA5_Tair)))
+
+```{r qaqc}
+srdb_joined %>% 
+    filter(Rs_annual > 0) %>% 
+    transmute(`sqrt(Rs_growingseason)` = sqrt(Rs_growingseason),
+              `sqrt(Rs_annual)` = sqrt(Rs_annual), 
+              `sqrt(Rh_annual)` = sqrt(Rh_annual)) %>% 
+    pairs()
+
+# GPP
+srdb_joined |> 
+  filter(!is.na(MODIS_GPP), !is.na(SRDB_GPP)) |> 
+  ggplot(aes(SRDB_GPP, MODIS_GPP)) +
+  geom_point() +
+  geom_abline()
+
+# Climate
+srdb_joined |> 
+  filter(!is.na(ERA5_Tair), !is.na(WC_MAT)) |> 
+  ggplot(aes(WC_MAT, ERA5_Tair)) +
+  geom_point() +
+  geom_abline()
+srdb_joined |> 
+  filter(!is.na(ERA5_Precip), !is.na(WC_MAP)) |> 
+  ggplot(aes(WC_MAP, ERA5_Precip * 10)) +
+  geom_point() +
+  geom_abline()
 ```
 
 Write data to file for next step in the analysis.
