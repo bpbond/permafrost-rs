@@ -11,7 +11,8 @@ editor: visual
 
 **TODO:**
 
-- How tightly related are GST and T1m? How well are they related to Tair or Tsoil from ERA5?
+- Re-do QAQC graphs at the end...ARGH WTF
+- Check that pre-199x data aren't getting PF data
 - Try global Random Forest model with permafrost flag
 - CLEAN UP GRACE'S STUFF AND MERGE AND UPDATE
 - Deal with the remaining papers in my to-process folder, prioritizing high latitude ones
