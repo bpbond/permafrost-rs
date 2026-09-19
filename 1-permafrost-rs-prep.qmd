@@ -11,7 +11,6 @@ editor: visual
 
 **TODO:**
 
-- Re-do QAQC graphs at the end...ARGH WTF
 - Check that pre-199x data aren't getting PF data
 - Try global Random Forest model with permafrost flag
 - CLEAN UP GRACE'S STUFF AND MERGE AND UPDATE
@@ -19,7 +18,9 @@ editor: visual
 - Find and fix NA biomes
 - Read about VIF
 
-This file does prep work for the main analysis asking whether permafrost *presence* and *thermal state* affect the measured soil-to-atmosphere CO2 flux ("soil respiration").
+This script does prep work for the main analysis asking whether
+permafrost *presence* and *thermal state* affect the measured
+soil-to-atmosphere CO2 flux ("soil respiration").
 
 ```{r setup}
 #| include: false
@@ -50,12 +51,14 @@ library(MODISTools)
 
 # SRDB
 
-The Soil Respiration Database (SRBD) is described by [Jian et al. (2021)](https://essd.copernicus.org/articles/13/255/2021/), but the version we use here has had extensive updates since then.
+The Soil Respiration Database (SRBD) is described by 
+[Jian et al. (2021)](https://essd.copernicus.org/articles/13/255/2021/),
+but the version we use here has had extensive updates since then.
 
 ```{r read-srdb}
 #| fig-width: 12
 
-read_csv("data-srdb/srdb-data.csv", show_col_types = FALSE) %>% 
+read_csv("data-srdb/srdb-data.csv", show_col_types = FALSE) |>  
     select(Record_number, Study_number, Author, 
            Year = Study_midyear, YearsOfData, 
            Latitude, Longitude, Elevation, Manipulation, 
@@ -63,13 +66,17 @@ read_csv("data-srdb/srdb-data.csv", show_col_types = FALSE) %>%
            Rs_annual, Rh_annual, Rs_growingseason,
            Ecosystem_type,
            # intercomparison columns -- will not be used afterwards
-           SRDB_study_temp = Study_temp, SRDB_study_precip = Study_precip, 
-           SRDB_GPP = GPP, SRDB_ANPP = ANPP, SRDB_leaf_habit = Leaf_habit) %>% 
-    filter(Manipulation == "None") %>% 
-    filter(!Ecosystem_type %in% c("Agriculture", "Bare", "Urban")) %>% 
-    filter(!is.na(Longitude), !is.na(Latitude), !is.na(Year)) %>% 
-    filter(!is.na(Rs_growingseason) | !is.na(Rs_annual) | !is.na(Rh_annual)) %>% 
-    select(-Elevation, -Manipulation) %>% 
+           SRDB_study_temp = Study_temp, 
+           SRDB_study_precip = Study_precip, 
+           SRDB_GPP = GPP, 
+           SRDB_leaf_habit = Leaf_habit) |>  
+    filter(Manipulation == "None") |> 
+    filter(!Ecosystem_type %in% c("Agriculture", "Bare", "Urban")) |> 
+    filter(!is.na(Longitude), !is.na(Latitude), !is.na(Year)) |> 
+    filter(!is.na(Rs_growingseason) | 
+             !is.na(Rs_annual) | 
+             !is.na(Rh_annual)) |> 
+    select(-Elevation, -Manipulation) |> 
     mutate(Longitude = round(Longitude, 4),
            Latitude = round(Latitude, 4),
            Year = floor(Year)) ->
@@ -78,7 +85,7 @@ read_csv("data-srdb/srdb-data.csv", show_col_types = FALSE) %>%
 message(nrow(srdb), " rows of data")
 
 world <- ne_coastline()
-srdb_annual <- srdb %>% filter(is.na(Rs_annual))
+srdb_annual <- srdb |> filter(is.na(Rs_annual))
 ggplot(world) + 
     geom_sf() + 
     geom_point(data = srdb_annual, 
@@ -86,7 +93,7 @@ ggplot(world) +
                na.rm = TRUE) + 
     ggtitle(paste0("SRDB Rs_annual N=", nrow(srdb_annual)))
 
-srdb_rh_annual <- srdb %>% filter(!is.na(Rh_annual))
+srdb_rh_annual <- srdb |> filter(!is.na(Rh_annual))
 ggplot(world) + 
     geom_sf() + 
     geom_point(data = srdb_rh_annual, 
@@ -94,7 +101,7 @@ ggplot(world) +
                na.rm = TRUE) + 
     ggtitle(paste0("SRDB Rh_annual N=", nrow(srdb_rh_annual)))
 
-srdb_growingseason <- srdb %>% filter(is.na(Rs_growingseason))
+srdb_growingseason <- srdb |> filter(is.na(Rs_growingseason))
 ggplot(world) + 
     geom_sf() + 
     geom_point(data = srdb_growingseason, 
@@ -107,17 +114,17 @@ ggplot(world) +
 
 # Subsample SRDB data for quick testing
 set.seed(123)
-# srdb %>%
+# srdb |>
 #   filter(Latitude > 50) |> 
 #     slice_sample(n = 100) ->
 #     srdb_sample
 srdb_sample <- srdb
 
-srdb_sample %>% 
+srdb_sample |> 
     select(Record_number, Longitude, Latitude) ->
     coords
 
-srdb_sample %>% 
+srdb_sample |> 
   distinct(Year, Longitude, Latitude) ->
   coords_yr
 ```
@@ -394,7 +401,7 @@ ERA5_YEARS <- 1995:2024
 
 # Load cached data if available
 ERA5_SHORT_NAME <- read_csv("data-ERA5/data-ERA5/ERA5_short_names.csv", col_types = "cc")
-ERA5_CACHE <- "caches/ERA5_data_cache.parquet"
+ERA5_CACHE <- "caches/ERA5_cache.parquet"
 if(file.exists(ERA5_CACHE)) {
   message("Reading cache file ", ERA5_CACHE)
   era5_cache <- arrow::read_parquet(ERA5_CACHE)
@@ -427,13 +434,13 @@ read_era5 <- function(yr, lon, lat, ERA5_SHORT_NAME) {
   
   # Extract, reshape, clean up
   y <- terra::extract(x, pf_lonlat[i,]) # this is the expensive step
-  y %>% 
-    pivot_longer(-ID) %>% 
+  y |> 
+    pivot_longer(-ID) |> 
     mutate(time = time(x), 
            Year = yr, 
            Longitude = lon, Latitude = lat,
            short_name = rep(ERA5_SHORT_NAME$short_name, 
-                            length.out = n())) %>% 
+                            length.out = n())) |> 
     select(Year, time, Longitude, Latitude, short_name, value) ->
     this_dat
   return(this_dat)
@@ -490,10 +497,10 @@ and match individual-year values to SRDB year.
 # 1995-2024 ERA5 for each unique SRDB data point.
 # Reshape, summarise to annual (although this may change in
 # the future), and join with SRDB data
-era5_cache %>% 
-    mutate(time = as.Date(time)) %>% 
-    pivot_wider(names_from = "short_name") %>% 
-    group_by(Year, Longitude, Latitude) %>%
+era5_cache |> 
+    mutate(time = as.Date(time)) |> 
+    pivot_wider(names_from = "short_name") |> 
+    group_by(Year, Longitude, Latitude) |>
     summarise(ERA5_Tair = round(mean(Tair) - 273.1, 2),
               ERA5_Tsoil_lev1 = round(mean(Tsoil_lev1) - 273.1, 2),
               #ERA5_Tsoil_lev2 = round(mean(Tsoil_lev2) - 273.1, 2),
@@ -561,7 +568,7 @@ soil_dat$ERA5_soil_number <- as.character(soil_dat$ERA5_soil_number) # for join 
 soil_names <- tibble(strings = strsplit(units(soil), "; ")[[1]]) |>  
     separate(strings, into = c("ERA5_soil_number", "ERA5_soil_name"), 
              convert = TRUE, sep = "=")
-soil_dat <- soil_dat %>% left_join(soil_names, by = "ERA5_soil_number")
+soil_dat <- soil_dat |> left_join(soil_names, by = "ERA5_soil_number")
 
 # Extract vegetation data
 tvh <- rast("data-ERA5/data-ERA5/ERA5_tvh.grib")
@@ -612,7 +619,7 @@ for(i in seq_len(nrow(coords_yr))) {
   lat <- coords_yr$Latitude[i]
   
   # Are data already in cache?
-  cache %>% 
+  cache |> 
     filter(Year == yr, Longitude == lon, Latitude == lat) ->
     dat
   if(nrow(dat) > 0) {
@@ -653,12 +660,12 @@ for(i in seq_len(nrow(coords_yr))) {
 }
 
 # Summarise cache, join, sanity check plot
-cache %>% 
+cache |> 
   # 32767 is the 'fill value' for this data product -- no measurement
   # There are also some other values in the 32760s used for non-vegetated surfaces
   # see https://lpdaac.usgs.gov/documents/972/MOD17_User_Guide_V61.pdf
-  mutate(MODIS_GPP = if_else(MODIS_GPP >= 32760, NA_real_, MODIS_GPP)) %>% 
-  group_by(Year, Longitude, Latitude) %>% 
+  mutate(MODIS_GPP = if_else(MODIS_GPP >= 32760, NA_real_, MODIS_GPP)) |> 
+  group_by(Year, Longitude, Latitude) |> 
   summarise(MODIS_GPP = sum(MODIS_GPP) / 10.0, .groups = "drop") ->
   modis_gpp_annual
 
@@ -676,29 +683,34 @@ ggplot(world) +
 message("Size before joins: ", nrow(srdb_sample), " x ", ncol(srdb_sample))
 
 srdb_sample |> 
-  left_join(pf_stats, by = c("Record_number", "Longitude", "Latitude")) |> 
-  left_join(coords_worldclim, by = c("Record_number", "Longitude", "Latitude")) |> 
-  left_join(era5_annual, by = c("Longitude", "Latitude", "Year")) |> 
-  left_join(era5_soil_veg, by = c("Record_number", "Longitude", "Latitude")) |> 
-  left_join(modis_gpp_annual, by = c("Longitude", "Latitude", "Year")) |> 
-  left_join(era5_trends, by = c("Longitude", "Latitude")) -> 
+  left_join(pf_stats, 
+            by = c("Record_number", "Longitude", "Latitude")) |> 
+  left_join(coords_worldclim, 
+            by = c("Record_number", "Longitude", "Latitude")) |> 
+  left_join(era5_annual, 
+            by = c("Longitude", "Latitude", "Year")) |> 
+  left_join(era5_soil_veg, 
+            by = c("Record_number", "Longitude", "Latitude")) |> 
+  left_join(modis_gpp_annual, 
+            by = c("Longitude", "Latitude", "Year")) |> 
+  left_join(era5_trends,
+            by = c("Longitude", "Latitude")) -> 
   srdb_joined
 
 message("Size after joins: ", nrow(srdb_joined), " x ", ncol(srdb_joined))
 
 ```
 
-
-message("NA PF_GST_mean records: ", sum(is.na(srdb_joined$PF_GST_mean)))
-message("NA WC_MAT records: ", sum(is.na(srdb_joined$WC_MAT)))
-message("NA ERA_Tair records: ", sum(is.na(srdb_joined$ERA5_Tair)))
+NA PF_GST_mean records: `r sum(is.na(srdb_joined$PF_GST_mean))`
+NA WC_MAT records: `r sum(is.na(srdb_joined$WC_MAT))`
+NA ERA_Tair records: `r sum(is.na(srdb_joined$ERA5_Tair))`
 
 ```{r qaqc}
-srdb_joined %>% 
-    filter(Rs_annual > 0) %>% 
+srdb_joined |> 
+    filter(Rs_annual > 0) |> 
     transmute(`sqrt(Rs_growingseason)` = sqrt(Rs_growingseason),
               `sqrt(Rs_annual)` = sqrt(Rs_annual), 
-              `sqrt(Rh_annual)` = sqrt(Rh_annual)) %>% 
+              `sqrt(Rh_annual)` = sqrt(Rh_annual)) |> 
     pairs()
 
 # GPP
@@ -714,6 +726,7 @@ srdb_joined |>
   ggplot(aes(WC_MAT, ERA5_Tair)) +
   geom_point() +
   geom_abline()
+
 srdb_joined |> 
   filter(!is.na(ERA5_Precip), !is.na(WC_MAP)) |> 
   ggplot(aes(WC_MAP, ERA5_Precip * 10)) +
