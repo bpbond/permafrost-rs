@@ -364,16 +364,23 @@ coords_worldclim$WC_clay <- clay_dat[,2]
 
 ## ERA5 climate
 
-For each SRDB point we extract 2m air temperature, soil temperature and water
-content (levels 1 and 2), precipitation, and high-vegetation LAI from the 
+For each SRDB point we extract 2m air temperature, soil temperature
+and water content (levels 1 and 2), precipitation, and low- and 
+high-vegetation LAI from the 
 [ERA5-Land monthly averaged data](https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land-monthly-means?tab=overview) 
 (available from 1950 to present; I downloaded 1985-2024).
 
-These data are *big* and operations are *slow*. We use two strategies to deal with this:
+We extract 1995-2024, a 30-year period covering the 
+permafrost thermal data range.
 
-- Download individual-year `grib` files from the EMCWF Climate Data Store (a pain to download, but then extracting from them is relatively fast); and
+These data are *big* and operations are *slow*. 
+We use three strategies to deal with this:
 
-- Use a cache so we only process things once, hopefully
+- Download individual-year `grib` files from the EMCWF Climate Data Store (a pain to download, but then extracting from them is relatively fast);
+
+- Use a cache so we only process things once, hopefully;
+
+- Parallelize.
 
 Extract data for 1995-2024; compute annual values; compute trends
 for Tair and Precip; and match individual-year values to SRDB year.
@@ -457,6 +464,9 @@ for(i in seq_len(nrow(pf_lonlat))) {
   } # yr loop
 }
 
+```
+
+```{r era5-trends}
 # At this point the cache data frame has all the needed data:
 # 1995-2024 ERA5 for each point permafrost-region point.
 # Reshape, summarise to annual (although this may change in
@@ -510,6 +520,7 @@ ggplot(world) +
   coord_sf(ylim = c(25, 85)) +
   ggtitle("ERA5 precip trends (cm/decade)")
 ```
+
 
 ## ERA5 veg and soil
 
