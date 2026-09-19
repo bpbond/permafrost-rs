@@ -390,18 +390,22 @@ We use three strategies to deal with this:
 
 - Parallelize.
 
-Extract data for 1995-2024.
+```{r era5-settings}
+# 1995-2024 is 30 year period that covers the permafrost thermal dataset
+ERA5_YEARS <- 1995:2024
+
+ERA5_SHORT_NAME <- read_csv("data-ERA5/data-ERA5/ERA5_short_names.csv", 
+                            col_types = "cc")
+ERA5_CACHE <- "caches/ERA5_cache.parquet"
+```
+
+Extract data for `r min(ERA5_YEARS)`-`r max(ERA5_YEARS)`.
 
 ```{r read-era5}
 #| fig-height: 6
 #| fig-width: 10
 
-# 1995-2024 is 30 year period that covers the permafrost thermal dataset
-ERA5_YEARS <- 1995:2024
-
 # Load cached data if available
-ERA5_SHORT_NAME <- read_csv("data-ERA5/data-ERA5/ERA5_short_names.csv", col_types = "cc")
-ERA5_CACHE <- "caches/ERA5_cache.parquet"
 if(file.exists(ERA5_CACHE)) {
   message("Reading cache file ", ERA5_CACHE)
   era5_cache <- arrow::read_parquet(ERA5_CACHE)
@@ -413,8 +417,8 @@ if(file.exists(ERA5_CACHE)) {
                        Latitude = numeric(0))
 }
 
-# Helper function to read and process ERA5 data for one lon-lat-yr
-read_era5 <- function(yr, lon, lat, ERA5_SHORT_NAME) {
+# Helper function to read and process ERA5 data for one yr-lon-lat
+read_era5 <- function(yr, lon, lat, ERA5_SHORT_NAME, my_coords) {
   # Construct year-specific file name; these were downloaded
   # from ECMWF and contain 2m temperature, soil temperature
   # levels 1 and 2,  volumetric soil water content levels 1 
@@ -433,7 +437,7 @@ read_era5 <- function(yr, lon, lat, ERA5_SHORT_NAME) {
   }
   
   # Extract, reshape, clean up
-  y <- terra::extract(x, pf_lonlat[i,]) # this is the expensive step
+  y <- terra::extract(x, my_coords[i,]) # this is the expensive step
   y |> 
     pivot_longer(-ID) |> 
     mutate(time = time(x), 
@@ -463,16 +467,18 @@ for(i in seq_len(nrow(coords_unique))) {
   years_needed <- setdiff(ERA5_YEARS, unique_years)
   
   if(length(years_needed) > 0) {
-    message(i, "/", nrow(coords_unique), ": ", yr, " ", lon, " ", lat,
+    message(i, "/", nrow(coords_unique), ": ",lon, " ", lat,
             " yn=", length(years_needed))
     
+    # Extract, paralellizing over years, data for this lon/lat
     dat_list <- mclapply(years_needed,
                          FUN = read_era5, 
                          # yr is passed by default
                          lon = lon, lat = lat,
                          ERA5_SHORT_NAME = ERA5_SHORT_NAME,
+                         my_coords = coords_unique,
                          mc.cores = 10)
-    
+    # ...and add to cache
     dat <- bind_rows(dat_list)
     era5_cache |> 
       bind_rows(dat) ->
