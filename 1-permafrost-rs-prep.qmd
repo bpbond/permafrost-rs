@@ -30,6 +30,7 @@ library(tidyr)
 library(ggplot2)
 theme_set(theme_bw())
 library(lubridate)
+library(parallel)
 
 # File IO packages
 library(ncdf4)
@@ -382,97 +383,114 @@ We use three strategies to deal with this:
 
 - Parallelize.
 
-Extract data for 1995-2024; compute annual values; compute trends
-for Tair and Precip; and match individual-year values to SRDB year.
+Extract data for 1995-2024.
 
 ```{r read-era5}
 #| fig-height: 6
 #| fig-width: 10
 
+# 1995-2024 is 30 year period that covers the permafrost thermal dataset
+ERA5_YEARS <- 1995:2024
+
 # Load cached data if available
 ERA5_SHORT_NAME <- read_csv("data-ERA5/data-ERA5/ERA5_short_names.csv", col_types = "cc")
 ERA5_CACHE <- "caches/ERA5_data_cache.parquet"
 if(file.exists(ERA5_CACHE)) {
-    message("Reading cache file ", ERA5_CACHE)
-    cache <- arrow::read_parquet(ERA5_CACHE)
-    message("\t", nrow(cache), " rows")
+  message("Reading cache file ", ERA5_CACHE)
+  era5_cache <- arrow::read_parquet(ERA5_CACHE)
+  message("\t", nrow(era5_cache), " rows")
 } else {
-    message("No ERA5 data cache found")
-    cache <- tibble(Year = numeric(0), 
-                    Longitude = numeric(0),
-                    Latitude = numeric(0))
+  message("No ERA5 data cache found")
+  era5_cache <- tibble(Year = numeric(0), 
+                       Longitude = numeric(0),
+                       Latitude = numeric(0))
 }
 
-# Get distinct location combinations
-# We only get ERA5 data for locations with permafrost thermal data
-pf_cache |> 
-  filter(!is.na(PF_GST)) |> 
-    distinct(Longitude, Latitude) ->
-    pf_lonlat
-
-cache_hits <- 0
-for(i in seq_len(nrow(pf_lonlat))) {
-  lon <- pf_lonlat$Longitude[i]
-  lat <- pf_lonlat$Latitude[i]
+# Helper function to read and process ERA5 data for one lon-lat-yr
+read_era5 <- function(yr, lon, lat, ERA5_SHORT_NAME) {
+  # Construct year-specific file name; these were downloaded
+  # from ECMWF and contain 2m temperature, soil temperature
+  # levels 1 and 2,  volumetric soil water content levels 1 
+  # and 2, total precipitation, and high and lower veg LAI
+  f <- file.path("data-ERA5/data-ERA5", paste0("ERA5_", yr, ".grib"))
+  if(!file.exists(f)) {
+    message("\t", f, " does not exist; skipping")
+    return(NULL)
+  }
+  x <- terra::rast(f)
   
-  # 1994-2024 is 30 year period that covers the permafrost thermal dataset
-  for(yr in 1995:2024) {
-    # Are data already in cache?
-    cache %>% 
-      filter(Year == yr, Longitude == lon, Latitude == lat) ->
-      dat
-    if(nrow(dat) > 0) {
-      cache_hits <- cache_hits + 1
-    } else {
-      if(cache_hits > 0) { 
-        message("(", cache_hits, " cache hits)")
-        cache_hits <- 0
-      }
-      message(i, "/", nrow(pf_lonlat), ": ", yr, " ", lon, " ", lat, appendLF = FALSE)
-      # Construct year-specific file name; these were downloaded
-      # from ECMWF and contain 2m temperature, soil temperature
-      # levels 1 and 2,  volumetric soil water content levels 1 
-      # and 2, total precipitation, and high and lower veg LAI
-      f <- file.path("data-ERA5/data-ERA5", paste0("ERA5_", yr, ".grib"))
-      if(!file.exists(f)) {
-        message("\t", f, " does not exist; skipping")
-        next
-      }
-      message("\tNo data in cache; extracting from ", f, "...")
-      x <- terra::rast(f)
-      
-      # Make sure the time period is what we're expecting
-      if(!all(year(time(x)) == yr)) {
-        stop("Year is supposed to be ", yr,
-             " but file data dates are different!")
-      }
-      
-      # Extract, reshape, clean up
-      y <- terra::extract(x, pf_lonlat[i,]) # this is the expensive step
-      y %>% 
-        pivot_longer(-ID) %>% 
-        mutate(time = time(x), 
-               Year = yr, 
-               Longitude = lon, Latitude = lat,
-               short_name = rep(ERA5_SHORT_NAME$short_name, length.out = n())) %>% 
-        select(Year, time, Longitude, Latitude, short_name, value) ->
-        dat
-      cache <- bind_rows(cache, dat)
-      message("\tAdding ", nrow(dat), " data rows to cache ", ERA5_CACHE)
-      arrow::write_parquet(cache, ERA5_CACHE)
-    }
-  } # yr loop
+  # Make sure the time period is what we're expecting
+  if(!all(year(time(x)) == yr)) {
+    stop("Year is supposed to be ", yr,
+         " but file data dates are different!")
+  }
+  
+  # Extract, reshape, clean up
+  y <- terra::extract(x, pf_lonlat[i,]) # this is the expensive step
+  y %>% 
+    pivot_longer(-ID) %>% 
+    mutate(time = time(x), 
+           Year = yr, 
+           Longitude = lon, Latitude = lat,
+           short_name = rep(ERA5_SHORT_NAME$short_name, 
+                            length.out = n())) %>% 
+    select(Year, time, Longitude, Latitude, short_name, value) ->
+    this_dat
+  return(this_dat)
 }
 
+# Walk through the data and, if needed, 
+# get data for each year (in parallel)
+coords_unique <- coords |> distinct(Longitude, Latitude)
+cache_hits <- 0
+for(i in seq_len(nrow(coords_unique))) {
+  
+  lon <- coords_unique$Longitude[i]
+  lat <- coords_unique$Latitude[i]
+  # Isolate relevant cache data and compute years needed, if any
+  era5_cache[era5_cache$Longitude == lon &
+               era5_cache$Latitude == lat, "Year"] |> 
+    pull() |> 
+    unique() -> 
+    unique_years
+  years_needed <- setdiff(ERA5_YEARS, unique_years)
+  
+  if(length(years_needed) > 0) {
+    message(i, "/", nrow(coords_unique), ": ", yr, " ", lon, " ", lat,
+            " yn=", length(years_needed))
+    
+    dat_list <- mclapply(years_needed,
+                         FUN = read_era5, 
+                         # yr is passed by default
+                         lon = lon, lat = lat,
+                         ERA5_SHORT_NAME = ERA5_SHORT_NAME,
+                         mc.cores = 10)
+    
+    dat <- bind_rows(dat_list)
+    era5_cache |> 
+      bind_rows(dat) ->
+      era5_cache
+    message("\tAdding ", nrow(dat), " data rows to ", ERA5_CACHE)
+    arrow::write_parquet(era5_cache, ERA5_CACHE)
+  } else {
+    cache_hits <- cache_hits + 1
+  }
+  
+} # coords_unique loop
+
+message("\tcache hits: ", cache_hits)
+message("All done with ERA5 extractions")
 ```
+
+Compute annual values, compute trends for Tair and Precip, 
+and match individual-year values to SRDB year.
 
 ```{r era5-trends}
 # At this point the cache data frame has all the needed data:
-# 1995-2024 ERA5 for each point permafrost-region point.
+# 1995-2024 ERA5 for each unique SRDB data point.
 # Reshape, summarise to annual (although this may change in
 # the future), and join with SRDB data
-message("All done with ERA5 extractions")
-cache %>% 
+era5_cache %>% 
     mutate(time = as.Date(time)) %>% 
     pivot_wider(names_from = "short_name") %>% 
     group_by(Year, Longitude, Latitude) %>%
