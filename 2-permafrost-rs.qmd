@@ -176,6 +176,24 @@ dat_filtered |>
 
 **Conclusion: we have a transformation winner: `sqrt()`!**
 
+### Summary
+
+```{r data-summary}
+
+dat_filtered |> 
+  select(Year, 
+         sqrt_Rs_annual, sqrt_Rh_annual, sqrt_Rs_growingseason,
+         PF_GST_mean) |> 
+  pivot_longer(starts_with("sqrt")) |> 
+  mutate(PF = !is.na(PF_GST_mean)) |> 
+  group_by(name, PF) |> 
+  summarise(`Years` = paste(min(Year), max(Year), sep = "-"),
+            N = n(),
+            .groups = "drop") |> 
+  knitr::kable()
+            
+```
+
 
 ## H1: global model test
 
