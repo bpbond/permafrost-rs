@@ -738,13 +738,18 @@ srdb_joined |>
 # Climate
 srdb_joined |> 
   filter(!is.na(ERA5_Tair), !is.na(WC_MAT)) |> 
-  ggplot(aes(WC_MAT, ERA5_Tair)) +
+  ggplot(aes(WC_MAT, ERA5_Tair_mean)) +
   geom_point() +
   geom_abline()
 
 srdb_joined |> 
+  ggplot(aes(ERA5_Tair, SRDB_study_temp)) +
+  geom_point(na.rm = TRUE) +
+  geom_abline()
+
+srdb_joined |> 
   filter(!is.na(ERA5_Precip), !is.na(WC_MAP)) |> 
-  ggplot(aes(WC_MAP, ERA5_Precip * 10)) +
+  ggplot(aes(WC_MAP, ERA5_Precip_mean * 10)) +
   geom_point() +
   geom_abline()
 ```
