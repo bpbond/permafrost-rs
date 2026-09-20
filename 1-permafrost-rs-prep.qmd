@@ -499,10 +499,9 @@ Compute annual values, compute trends for Tair and Precip,
 and match individual-year values to SRDB year.
 
 ```{r era5-trends}
-# At this point the cache data frame has all the needed data:
-# 1995-2024 ERA5 for each unique SRDB data point.
-# Reshape, summarise to annual (although this may change in
-# the future), and join with SRDB data
+# At this point the cache data frame has all the needed monthly
+# ERA5 data for each unique SRDB data point.
+# Reshape and summarise to annual
 era5_cache |> 
     mutate(time = as.Date(time)) |> 
     pivot_wider(names_from = "short_name") |> 
@@ -518,11 +517,19 @@ era5_cache |>
               .groups = "drop") ->
     era5_annual
 
-# Compute trends - just Tair and Precip for now
+# Compute climatology (means over the entire time series)
+era5_annual |> 
+  group_by(Longitude, Latitude) |> 
+  summarise(across(starts_with("ERA5"), mean, .names = "{.col}_mean"),
+            .groups = "drop") -> 
+  era5_means
+
+# Compute decadal trends - just Tair and Precip for now
 era5_annual |> 
   select(Longitude, Latitude, Year, ERA5_Tair, ERA5_Precip) |> 
   pivot_longer(starts_with("ERA5")) |> 
   filter(!is.na(value)) |> 
+  # fit a linear model over time to each lon/lat/variable
   group_by(Longitude, Latitude, name) |> 
   reframe(tidy(lm(value * 10 ~ Year))) |> 
   filter(term == "Year") |> 
@@ -533,23 +540,14 @@ era5_annual |>
 # A few sanity check plots
 ggplot(world) + 
   geom_sf() + 
-  geom_point(data = era5_trends, 
-             aes(x = Longitude, y = Latitude, color = trend_ERA5_Tair),
+  geom_point(data = era5_means, 
+             aes(x = Longitude, y = Latitude, color = ERA5_Tair_mean),
              na.rm = TRUE) + 
-  coord_sf(ylim = c(25, 85)) +
-  ggtitle("ERA5 2m air temperature trends (degC/decade)")
+  ggtitle("ERA5 2m air temperature mean")
 
 ggplot(era5_trends, aes(x = trend_ERA5_Tair)) + 
   geom_histogram(bins = 30) +
   ggtitle("ERA5 Tair trends (degC/decade)")
-
-ggplot(world) + 
-  geom_sf() + 
-  geom_point(data = era5_trends, 
-             aes(x = Longitude, y = Latitude, color = trend_ERA5_Precip),
-             na.rm = TRUE) + 
-  coord_sf(ylim = c(25, 85)) +
-  ggtitle("ERA5 precip trends (cm/decade)")
 ```
 
 
@@ -690,17 +688,28 @@ message("Size before joins: ", nrow(srdb_sample), " x ", ncol(srdb_sample))
 
 srdb_sample |> 
   left_join(pf_stats, 
-            by = c("Record_number", "Longitude", "Latitude")) |> 
+            by = c("Record_number", "Longitude", "Latitude"),
+            relationship = "many-to-one") |> 
   left_join(coords_worldclim, 
             by = c("Record_number", "Longitude", "Latitude")) |> 
   left_join(era5_annual, 
-            by = c("Longitude", "Latitude", "Year")) |> 
-  left_join(era5_soil_veg, 
-            by = c("Record_number", "Longitude", "Latitude")) |> 
-  left_join(modis_gpp_annual, 
-            by = c("Longitude", "Latitude", "Year")) |> 
+            by = c("Longitude", "Latitude", "Year"),
+            relationship = "many-to-one") |> 
+  left_join(era5_means,
+            by = c("Longitude", "Latitude"),
+            relationship = "many-to-one") |> 
   left_join(era5_trends,
-            by = c("Longitude", "Latitude")) -> 
+            by = c("Longitude", "Latitude"),
+            relationship = "many-to-one") |>
+  left_join(era5_soil_veg, 
+            by = c("Record_number", "Longitude", "Latitude"),
+            relationship = "many-to-one") |> 
+  left_join(modis_gpp_annual, 
+            by = c("Longitude", "Latitude", "Year"),
+            relationship = "many-to-one") |> 
+  left_join(era5_trends,
+            by = c("Longitude", "Latitude"),
+            relationship = "many-to-one") -> 
   srdb_joined
 
 message("Size after joins: ", nrow(srdb_joined), " x ", ncol(srdb_joined))
