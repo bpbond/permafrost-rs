@@ -12,6 +12,9 @@ editor: source
 ```{r setup}
 #| include: false
 
+source("utilities.R")
+K_FOLD <- 5
+
 # Data processing and visualization packages
 library(dplyr)
 library(tidyr)
@@ -202,9 +205,154 @@ dat_filtered |>
 
 We have a transformation winner: `sqrt()`!
 
-## H1: global model test
+### Base datasets
 
-```{r}
+```{r define-datasets}
+
+# Base test dataset (all three d.v.'s)
+dat_filtered %>% 
+  mutate(ERA5_Tair_anomaly = ERA5_Tair - ERA5_Tair_mean,
+         ERA5_Precip_anomaly = ERA5_Precip - ERA5_Precip_mean) |> 
+    select(sqrt_Rs_annual, sqrt_Rh_annual, sqrt_Rs_growingseason,
+           # ancillary data from SRDB
+           Year, Latitude, Longitude, SRDB_leaf_habit, SRDB_ecosystem_type = Ecosystem_type,
+           # ERA5 data
+           ERA5_Tsoil_lev1, ERA5_VWC_lev1, 
+           # ERA5 state data
+           ERA5_LAI_high, ERA5_LAI_low, ERA5_soil_number,
+           # ERA5 climatology
+           ERA5_Tair_mean, ERA5_Precip_mean, 
+           # ERA5 anomalies from the climatology
+           ERA5_Tair_anomaly, ERA5_Precip_anomaly,
+           # ERA5 trends
+           trend_ERA5_Tair, trend_ERA5_Precip,
+           # Permafrost thermal state
+           PF_GST, PF_GST_uncertainty, PF_T1m, PF_T1m_uncertainty,
+           # Permafrost 'climatology'
+           PF_GST_mean, PF_T1m_mean,
+           # Permafrost thermal trends
+           PF_GST_trend, PF_GST_p.value, PF_T1m_trend, PF_T1m_p.value, 
+           # MODIS
+           MODIS_GPP,
+           # Permafrost flag
+           Permafrost
+           ) ->
+    dat_base_all
+
+# Base test dataset without MODIS or SPEI data
+# dat_base_all %>% 
+#     select(-MODIS_NPP, -MODIS_GPP, -starts_with("SPEI")) ->
+#     dat_base_no_modispei
+
+# Global test dataset: no permafrost state information
+dat_base_all %>% 
+    select(-starts_with("PF_"), -Latitude, -Longitude, -Year) -> 
+    dat_base_global
+
+```
+
+
+## H1: Global model test
+
+### Random Forest model: performance
+
+We are using the `ranger` package.
+
+Wright, M. N. and Ziegler, A.: Ranger: A fast implementation of random forests
+for high dimensional data in C++ and R, J. Stat. Softw., 77,
+https://doi.org/10.18637/jss.v077.i01, 2017.
+
+```{r base-rf}
+#| fig-width: 10
+#| fig-height: 6
+
+# Fit random forest model and test against validation data
+# The independent variable is in the first column
+fit_and_test_rf <- function(x_train, x_val) {
+    f <- as.formula(paste(colnames(x_train)[1], "~ ."))
+    rf <- ranger(formula = f, data = x_train, importance = "impurity")
+    # use importance = "permutation" for importance_pvalues()
+    training_rmse <- rmse(predict(rf, data = x_train)$predictions, pull(x_train[1]))
+        
+    if(!is.null(x_val)) {
+        val_preds <- predict(rf, data = x_val)$predictions
+        val_obs <- pull(x_val[1])
+        validation_r2 <- r2(preds = val_preds, obs = val_obs)
+        validation_rmse <- rmse(preds = val_preds, obs = val_obs)
+    } else {
+        validation_r2 <- NA_real_
+        validation_rmse <- NA_real_
+    }
+    
+    tibble(training_r2 = rf$r.squared, 
+           training_rmse = training_rmse,
+           validation_r2 = validation_r2,
+           validation_rmse = validation_rmse,
+           # PBE_importance isn't used until section 4's sensitivity test
+           pbe_importance = rank(importance(rf))["PBE"])
+}
+
+
+message("The dat_base_global dataset has ", dim(dat_base_global)[1],
+        " rows and ", dim(dat_base_global)[2], " columns")
+message("Full-data model performance:")
+dat_base_global |> 
+  select(-sqrt_Rh_annual, -sqrt_Rs_growingseason) |> 
+  select(-starts_with("trend")) |> 
+  na.omit() ->
+  dat_base_global_Rs_annual
+
+rf_all_data <- ranger(sqrt_Rs_annual ~ ., 
+                      data = dat_base_global_Rs_annual, 
+                      importance = "impurity")
+print(rf_all_data)
+
+dat_base_global_Rs_annual |> 
+  mutate(sqrt_Rs_annual_pred = predict(rf_all_data, data = dat_base_global_Rs_annual)$predictions) |> 
+  ggplot(aes(sqrt_Rs_annual, sqrt_Rs_annual_pred, color = Permafrost)) +
+  geom_point() + 
+  geom_abline()
+
+message("Random forest predictor importance and Altmann p-values:")
+imps <- sort(rf_all_data$variable.importance, decreasing = TRUE)
+print(imps)
+# importance_pvalues(rf_all_data, "altmann", 
+#                    num.permutations = 100,
+#                    formula = sqrt_Rs_annual ~ ., 
+#                    data = dat_base_global_Rs_annual)
+
+# Top three variables...
+pdpVars(data = dat_base_global_Rs_annual, 
+        fit = rf_all_data, 
+        response = "sqrt_Rs_annual",
+        vars = names(imps)[1:3])
+# ...and the next three
+pdpVars(data = dat_base_global_Rs_annual, 
+        fit = rf_all_data, 
+        response = "sqrt_Rs_annual",
+        vars = names(imps)[4:6])
+
+# k-fold cross-validation for all dependent variables
+message("k-fold cross-validation:")
+
+dvs <- c("sqrt_Rs_annual", "sqrt_Rh_annual", "sqrt_Rs_growingseason")
+preds <- setdiff(colnames(dat_base_global), dvs)
+kf_out <- list()
+for(dv in dvs) {
+    # Construct dataset and do the k-fold
+    x <- dat_base_global[c(dv, preds)]
+    x <- x[complete.cases(x),]
+    do_k_fold(x, fit_and_test_rf) %>% 
+        select(-pbe_importance) %>%  # not used here
+        mutate(dv = dv, n = nrow(x)) ->
+        kf_out[[dv]]
+}
+bind_rows(kf_out) %>% 
+    group_by(dv) %>% 
+    summarise(across(everything(), \(x) mean(x, digits = 3)), .groups = "drop") %>% 
+    mutate(k = K_FOLD) -> # just so it's "10" or whatever as expected
+    kf_out 
+print(kf_out)
 
 ```
 
