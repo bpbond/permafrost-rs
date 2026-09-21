@@ -20,6 +20,8 @@ theme_set(theme_bw())
 library(readr)
 library(lubridate)
 library(arrow)
+library(sf)
+library(rnaturalearth)
 
 # Main analysis packages
 library(ranger)
@@ -80,8 +82,7 @@ database (SRDB) and filter for:
 * No agriculture, bare soil, or urban ecosystem type
 * Latitude, longitude, and year of measurement all present
 * Either `Rs_annual` or `Rs_growingseason`, or both, is given
-
-This produces a dataset of TODO observations at TODO different sites:
+* In the 1995-2024 period
 
 ### Permafrost thermal state
 
@@ -121,21 +122,48 @@ All data are ultimately put on the 0.01° permafrost_cci spatial grid.
 ## Main dataset
 
 ```{r read-data}
+#| fig-width: 12
 
 dat <- read_parquet("srdb_joined_data.parquet")
 
 message(nrow(dat), " rows of data")
 
 dat |> 
-    filter(is.na(Rs_growingseason) | 
-             (Rs_growingseason > 0 & Rs_growingseason < 20)) |> 
-    filter(is.na(Rs_annual) | 
-             (Rs_annual > 0 & Rs_annual < 4000)) |> 
-    filter(is.na(Rh_annual) | 
-             (Rh_annual > 0 & Rh_annual < 2000)) ->
-    dat_filtered
+  filter(Year >= 1995) |> 
+  filter(is.na(Rs_growingseason) | 
+           (Rs_growingseason > 0 & Rs_growingseason < 20)) |> 
+  filter(is.na(Rs_annual) | 
+           (Rs_annual > 0 & Rs_annual < 4000)) |> 
+  filter(is.na(Rh_annual) | 
+           (Rh_annual > 0 & Rh_annual < 2000)) |> 
+  # flag: in the 'permafrost region' defined by Westermann et al. 2025?
+  mutate(Permafrost = !is.na(PF_GST)) |> 
+  # I don't have any current use for the WorldClim columns; drop
+  select(-starts_with("WC_")) ->
+  dat_filtered
 
 message("After filtering, ", nrow(dat_filtered), " rows of data")
+
+world <- ne_coastline()
+ggplot(world) + 
+    geom_sf() + 
+    geom_point(data = dat_filtered, 
+               aes(x = Longitude, y = Latitude, color = Permafrost),
+               size = 0.5,
+               na.rm = TRUE) +
+  theme(legend.position = "none") +
+  ggtitle("Main dataset locations, permafrost region points in teal")
+
+dat_filtered |> 
+  select(Year, 
+         Rs_annual, Rh_annual, Rs_growingseason,
+         Permafrost) |> 
+  pivot_longer(cols = c(Rs_annual, Rh_annual, Rs_growingseason)) |> 
+  group_by(name, Permafrost) |> 
+  summarise(`Years` = paste(min(Year), max(Year), sep = "-"),
+            N = sum(!is.na(value)),
+            .groups = "drop") |> 
+  knitr::kable()
 ```
 
 ### Dependent variable distribution
@@ -160,7 +188,6 @@ dat_filtered  |>
     filter(!is.na(value), value > 0) |> 
     rename(none = value) |> 
     mutate(log = log(none), sqrt = sqrt(none)) |> 
-    
     pivot_longer(-name, names_to = "Transformation") |> 
     ggplot(aes(value, color = Transformation)) + 
     geom_density() +
@@ -173,27 +200,11 @@ dat_filtered |>
     dat_filtered
 ```
 
-**Conclusion: we have a transformation winner: `sqrt()`!**
-
-### Summary
-
-```{r data-summary}
-
-dat_filtered |> 
-  select(Year, 
-         sqrt_Rs_annual, sqrt_Rh_annual, sqrt_Rs_growingseason,
-         PF_GST) |> 
-  pivot_longer(starts_with("sqrt")) |> 
-  mutate(PF = !is.na(PF_GST)) |> 
-  group_by(name, PF) |> 
-  summarise(`Years` = paste(min(Year), max(Year), sep = "-"),
-            N = n(),
-            .groups = "drop") |> 
-  knitr::kable()
-            
-```
-
+We have a transformation winner: `sqrt()`!
 
 ## H1: global model test
 
+```{r}
+
+```
 
