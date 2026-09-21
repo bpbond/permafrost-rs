@@ -6,7 +6,7 @@ format:
     embed-resources: true
     code-fold: true
 toc: true
-editor: visual
+editor: source
 ---
 
 **TODO:**
@@ -229,12 +229,12 @@ pf_cache_good |>
   pf_points
 ```
 
-Dataset | N 
- -- | --
-SRDB entries | `r nrow(srdb_sample)`
-SRDB geographic points | `r nrow(coords_yr |> distinct(Longitude, Latitude))`
-SRDB entries with permafrost| `r nrow(pf_cache_good)`
-SRDB year-geographic points with permafrost| `r nrow(pf_cache_good |> distinct(Latitude, Longitude))`
+| Dataset | N |
+|------------------------------------|------------------------------------|
+| SRDB entries | `r nrow(srdb_sample)` |
+| SRDB geographic points | `r nrow(coords_yr |> distinct(Longitude, Latitude))` |
+| SRDB entries with permafrost | `r nrow(pf_cache_good)` |
+| SRDB year-geographic points with permafrost | `r nrow(pf_cache_good |> distinct(Latitude, Longitude))` |
 
 ## Permafrost trends
 
@@ -550,7 +550,6 @@ ggplot(era5_trends, aes(x = trend_ERA5_Tair)) +
   ggtitle("ERA5 Tair trends (degC/decade)")
 ```
 
-
 ## ERA5 veg and soil
 
 ## Vegetation and soil type data
@@ -687,11 +686,15 @@ ggplot(world) +
 message("Size before joins: ", nrow(srdb_sample), " x ", ncol(srdb_sample))
 
 srdb_sample |> 
+  left_join(pf_cache_good, 
+            by = c("Record_number", "Longitude", "Latitude", "Year"),
+            relationship = "one-to-one") |> 
   left_join(pf_stats, 
             by = c("Record_number", "Longitude", "Latitude"),
-            relationship = "many-to-one") |> 
+            relationship = "one-to-one") |> 
   left_join(coords_worldclim, 
-            by = c("Record_number", "Longitude", "Latitude")) |> 
+            by = c("Record_number", "Longitude", "Latitude"),
+            relationship = "one-to-one") |> 
   left_join(era5_annual, 
             by = c("Longitude", "Latitude", "Year"),
             relationship = "many-to-one") |> 

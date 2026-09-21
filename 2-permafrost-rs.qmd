@@ -28,7 +28,6 @@ library(broom)
 library(car)
 ```
 
-
 ## Science question and hypotheses
 
 Permafrost is warming and potentially thawing throughout the
@@ -100,10 +99,10 @@ These data are 1997-2023. The spatial resolution is 0.01°.
 
 For each SRDB observation in that time range, we extract:
 
-* `GST` - Surface temperature
-* `GST_uncertainty` - Uncertainty of surface temperature
-* `T1m` - Temperature at 1m depth
-* `T1m_uncertainty` - Uncertainty of 1m temperature
+- `GST` - Surface temperature
+- `GST_uncertainty` - Uncertainty of surface temperature
+- `T1m` - Temperature at 1m depth
+- `T1m_uncertainty` - Uncertainty of 1m temperature
 
 We also compute, for each geographic point, the 1997-2023 trend
 (degC/decade) for the two temperature time series.
@@ -117,7 +116,7 @@ These include:
 * ERA5 for low and high LAI and soil type (~0.08°)
 * MODIS MOD17A2HGF GPP (500m)
 
-All data are ultimately put on the permafrost_cci spatial grid.
+All data are ultimately put on the 0.01° permafrost_cci spatial grid.
 
 ## Main dataset
 
@@ -183,9 +182,9 @@ dat_filtered |>
 dat_filtered |> 
   select(Year, 
          sqrt_Rs_annual, sqrt_Rh_annual, sqrt_Rs_growingseason,
-         PF_GST_mean) |> 
+         PF_GST) |> 
   pivot_longer(starts_with("sqrt")) |> 
-  mutate(PF = !is.na(PF_GST_mean)) |> 
+  mutate(PF = !is.na(PF_GST)) |> 
   group_by(name, PF) |> 
   summarise(`Years` = paste(min(Year), max(Year), sep = "-"),
             N = n(),
