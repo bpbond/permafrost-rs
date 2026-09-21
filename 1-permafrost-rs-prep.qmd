@@ -11,7 +11,6 @@ editor: source
 
 **TODO:**
 
-- Check that pre-199x data aren't getting PF data
 - Try global Random Forest model with permafrost flag
 - CLEAN UP GRACE'S STUFF AND MERGE AND UPDATE
 - Deal with the remaining papers in my to-process folder, prioritizing high latitude ones
@@ -219,11 +218,6 @@ ggplot(pf_cache_good,
   geom_line() + 
   ggtitle("1m permafrost temperatures over time")
 
-ggplot(pf_cache_good,
-       aes(PF_GST, PF_T1m, color = Latitude)) +
-  geom_point(size = 0.5) + 
-  ggtitle("Surface versus 1m permafrost temperatures")
-
 pf_cache_good |> 
   distinct(Record_number, Year, Longitude, Latitude) ->
   pf_points
@@ -402,8 +396,6 @@ ERA5_CACHE <- "caches/ERA5_cache.parquet"
 Extract data for `r min(ERA5_YEARS)`-`r max(ERA5_YEARS)`.
 
 ```{r read-era5}
-#| fig-height: 6
-#| fig-width: 10
 
 # Load cached data if available
 if(file.exists(ERA5_CACHE)) {
@@ -499,6 +491,9 @@ Compute annual values, compute trends for Tair and Precip,
 and match individual-year values to SRDB year.
 
 ```{r era5-trends}
+#| fig-height: 6
+#| fig-width: 10
+
 # At this point the cache data frame has all the needed monthly
 # ERA5 data for each unique SRDB data point.
 # Reshape and summarise to annual
@@ -709,9 +704,6 @@ srdb_sample |>
             relationship = "many-to-one") |> 
   left_join(modis_gpp_annual, 
             by = c("Longitude", "Latitude", "Year"),
-            relationship = "many-to-one") |> 
-  left_join(era5_trends,
-            by = c("Longitude", "Latitude"),
             relationship = "many-to-one") -> 
   srdb_joined
 
@@ -731,13 +723,6 @@ srdb_joined |>
               `sqrt(Rh_annual)` = sqrt(Rh_annual)) |> 
     pairs()
 
-# GPP
-srdb_joined |> 
-  filter(!is.na(MODIS_GPP), !is.na(SRDB_GPP)) |> 
-  ggplot(aes(SRDB_GPP, MODIS_GPP)) +
-  geom_point() +
-  geom_abline()
-
 # Climate
 srdb_joined |> 
   filter(!is.na(ERA5_Tair), !is.na(WC_MAT)) |> 
@@ -746,15 +731,54 @@ srdb_joined |>
   geom_abline()
 
 srdb_joined |> 
-  ggplot(aes(ERA5_Tair, SRDB_study_temp)) +
-  geom_point(na.rm = TRUE) +
-  geom_abline()
-
-srdb_joined |> 
   filter(!is.na(ERA5_Precip), !is.na(WC_MAP)) |> 
   ggplot(aes(WC_MAP, ERA5_Precip_mean * 10)) +
   geom_point() +
   geom_abline()
+
+srdb_joined |> 
+  ggplot(aes(ERA5_Tair, SRDB_study_temp)) +
+  geom_point(na.rm = TRUE) +
+  geom_abline() +
+  ggtitle("SRDB reported temperature versus ERA5")
+
+srdb_joined |> 
+  ggplot(aes(ERA5_Precip * 10, SRDB_study_precip)) +
+  geom_point(na.rm = TRUE) +
+  geom_abline() +
+  ggtitle("SRDB reported precip versus ERA5")
+
+# GPP
+srdb_joined |> 
+  filter(!is.na(MODIS_GPP), !is.na(SRDB_GPP)) |> 
+  ggplot(aes(SRDB_GPP, MODIS_GPP)) +
+  geom_point() +
+  geom_abline() +
+  ggtitle("SRDB reported GPP versus MODIS")
+
+# Permafrost
+srdb_joined |> 
+  ggplot(aes(PF_GST_trend, trend_ERA5_Tair)) +
+  geom_point(na.rm = TRUE) +
+  geom_abline() +
+  ggtitle("Permafrost surface versus air temperature trends")
+
+srdb_joined |> 
+  ggplot(aes(PF_GST_trend, PF_T1m_trend)) +
+  geom_point(na.rm = TRUE) +
+  geom_abline() +
+  ggtitle("Permafrost surface versus 1m temperature trends")
+
+srdb_joined |> 
+  ggplot(aes(PF_GST, PF_T1m)) + 
+  geom_point(na.rm = TRUE, alpha = 0.5) + 
+  geom_errorbar(aes(ymin = PF_T1m - PF_T1m_uncertainty, 
+                    ymax = PF_T1m + PF_T1m_uncertainty), alpha = 0.25) +
+  geom_errorbar(aes(xmin = PF_GST - PF_GST_uncertainty, 
+                    xmax = PF_GST + PF_GST_uncertainty), 
+                alpha = 0.25) + 
+  geom_abline() +
+  ggtitle("Surface versus 1m permafrost temperatures")
 ```
 
 Write data to file for next step in the analysis.
